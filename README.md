@@ -2,7 +2,9 @@
 
 System-wide Windows EQ. Compact desktop panel. Local processing. No account.
 
-I had issues with ones like Peace, due to introducing abrupt volume ramp-ups that risked my speakers and eardrums.
+<img width="1114" height="802" alt="image" src="https://github.com/user-attachments/assets/77abb845-5c13-4c58-9760-ab655755de4c" />
+
+_I encountered difficulties with audio solutions such as Peace due to abrupt volume ramp-ups that risked damaging my speaker system and eardrums._
 
 **[Source repository](https://github.com/leon-executes/bravado-desktop) · [Dependencies & downloads](DEPENDENCIES.md) · [Preset guide & research](PRESETS.md) · [Licence](LICENSE)**
 
