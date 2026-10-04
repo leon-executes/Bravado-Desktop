@@ -2,7 +2,6 @@
 
 System-wide Windows EQ. Compact desktop panel. Local processing.
 
-
 **[Source repository](https://github.com/leon-executes/bravado-desktop) · [Dependencies & downloads](DEPENDENCIES.md) · [Preset guide & research](PRESETS.md) · [Licence](LICENSE)**
 
 <br>
