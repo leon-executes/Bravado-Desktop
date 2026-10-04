@@ -10,7 +10,7 @@ System-wide Windows EQ. Compact desktop panel. Local processing.
 ![Bravado Desktop app UI](https://github.com/user-attachments/assets/77abb845-5c13-4c58-9760-ab655755de4c)
 
 
-**Note**: I encountered difficulties with audio solutions such as Peace due to abrupt volume ramp-ups that risked damaging my equipment and eardrums
+**Note**: I encountered difficulties with audio solutions such as Peace due to abrupt volume ramp-ups that risked damaging my equipment and eardrums.
 
 
 ## Run
