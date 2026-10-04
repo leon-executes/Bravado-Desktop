@@ -1,0 +1,19 @@
+# Personal state and diagnostics
+/bravado-data/
+*.log
+*.bak
+bravado-v*-backup.py
+
+# Python and build products
+__pycache__/
+*.py[cod]
+.build-venv/
+.venv/
+/build/
+/dist/
+*.spec
+*.zip
+
+# Machine exports, never factory presets
+/Current APO preset.json
+/Screenshot preset.json
