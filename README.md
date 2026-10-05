@@ -142,3 +142,5 @@ Aligned double adds 6.02 dB. Bass double mixes a 120 Hz low-pass copy, with an
 optional 0–10 ms delay. A delayed copy can cancel bass. All factory presets keep
 these effects off so their tonal balance also translates to mono. Factory curves,
 export parity and filter stability are covered by the embedded tests.
+
+![Bravado Desktop app UI 5](https://github.com/user-attachments/assets/d16a46e2-db77-4f07-9432-8f3fe1158968)
