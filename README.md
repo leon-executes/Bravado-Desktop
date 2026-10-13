@@ -32,12 +32,16 @@ See [dependencies](DEPENDENCIES.md) before installing anything.
 
 | Preset | Choose it for |
 | --- | --- |
-| Bravado Signature Preset | The original vivid 14-band curve; preamp 0 dB |
+| Bravado Signature Preset | Refined 17-band curve with deep foundation and focused definition; +1.4 dB preamp |
 | Pocket Physics | Deep foundation, dense kick-drum body and focused treble bite |
 | Flat | An uncoloured reference |
-| Nordrassil | Expansive body and broad strength between Signature and Pocket |
+| Nordrassil | Original 14-band foundation with expansive body and broad strength; +1.4 dB preamp |
 | Marble Alibi | Forward voices, firm bass and treble articulation |
 | Red Herring | Deepest bass weight and hard punch |
+| Silent Anvil | Original vivid Bravado Signature curve; 0 dB preamp |
+
+Bands display in ascending frequency order. Saved presets and sets sort automatically.
+Use **Sort bands** in the equalizer toolbar to reorder after frequency edits.
 
 Selecting a preset changes the preview. Apply to hear it. Start-up does not apply
 a new preset. These are tonal choices, not device calibration; see [the listening guide](PRESETS.md#choose-and-compare).
