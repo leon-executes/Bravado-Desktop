@@ -49,8 +49,9 @@ if os.name == "nt" and getattr(sys, "frozen", False):
 # ============================================================================
 # 01 — Validated model. Factory presets and validated settings.
 # ============================================================================
-VERSION = "0.8.6"
+VERSION = "0.8.9"
 SIGNATURE = "Bravado Signature Preset"
+ANVIL = "Silent Anvil"
 DOUBLE_DB = 20 * math.log10(2)
 ADMIN_TIMEOUT = 60
 FREQUENCIES = [10, 30, 50, 90, 160, 300, 500, 1000, 1600, 3000, 5000, 9000, 16000, 20000]
@@ -60,7 +61,7 @@ QUALITIES = [2.5, 3.75, 2.5, 3, 2, 1.41, 1.41, 2, 2, 1, 1.5, 2, 1, 1]
 # Original, assertive alternatives built around Signature's tonal scale.
 # Explicit filter gains and Q; no automatic level adjustment. See PRESETS.md.
 VOICES = {
-    "Nordrassil": (1.4,
+    SIGNATURE: (1.4,
         (2.8, 4.5, 2.8, 6, 5.7, 4, 0, 4.8, 4.6, -4.3, 2.8, 6, -4, -5),
         (1.2, 1.3, 2.5, 1.8, 1.6, 1.3, 1.8, 1.2, 1.6, 1.3, 1.5, 1.7, 1.2, 1.2)),
     "Marble Alibi": (0,
@@ -74,10 +75,13 @@ VOICES = {
         (1.6, 2.2, 2.5, 2.3, 2.3, 1.8, 2.1, 2, 2, 1.6, 2, 3, 1.5, 1.5)),
 }
 # Reuse the otherwise neutral first band for distinct sub-bass support.
-SUB_BASS_CENTRES = {"Red Herring": 20, "Pocket Physics": 24, "Nordrassil": 24}
-PRESET_ORDER = (SIGNATURE, "Pocket Physics", "Flat", "Nordrassil", "Marble Alibi", "Red Herring")
+VOICES["Nordrassil"] = VOICES[SIGNATURE]
+DEFINITION = ((420, -2.4, 1.2), (2100, .9, 2.2), (6000, 1.2, 2.0))
+SUB_BASS_CENTRES = {"Red Herring": 20, "Pocket Physics": 24, SIGNATURE: 24, "Nordrassil": 24}
+PRESET_ORDER = (SIGNATURE, "Pocket Physics", "Flat", "Nordrassil", "Marble Alibi", "Red Herring", ANVIL)
 PRESET_NOTES = {
-    SIGNATURE: "The original Bravado curve. Full-bodied and vivid.",
+    SIGNATURE: "Deep foundation with lower-mid relief and focused articulation.",
+    ANVIL: "The original Bravado curve. Full-bodied and vivid.",
     "Flat": "Uncoloured reference. EQ and effects at unity.",
     "Nordrassil": "Expansive body, deep foundation and sustained strength.",
     "Marble Alibi": "Forward voices, firm bass and open articulation.",
@@ -116,30 +120,49 @@ def bank(flat=False):
             "trim": 0, "delay": 0, "mute": False}
 
 
-def defaults():
-    return {"schema": 1, "name": SIGNATURE, "preamp": 0.0,
-            "processing": "native", "output": 0, "rumble": False, "bypass": False,
-            "double_track": False,
-            "room": False, "room_amount": 20, "separation": 0,
-            "bass_track": False, "bass_delay": 0,
-            "device": "all", "banks": {"all": bank()}}
+def defaults(name=SIGNATURE):
+    """Fresh factory model; Signature includes the three definition filters."""
+    model = {"schema": 1, "name": name, "preamp": 0.0,
+             "processing": "native", "output": 0, "rumble": False, "bypass": False,
+             "double_track": False,
+             "room": False, "room_amount": 20, "separation": 0,
+             "bass_track": False, "bass_delay": 0,
+             "device": "all", "banks": {"all": bank(name == "Flat")}}
+    if name in VOICES:
+        preamp, gains, qualities = VOICES[name]
+        model["preamp"] = preamp
+        bands = model["banks"]["all"]["bands"]
+        for band_, gain, quality in zip(bands, gains, qualities):
+            band_.update(gain=gain, q=quality)
+        if name in SUB_BASS_CENTRES:
+            bands[0]["freq"] = SUB_BASS_CENTRES[name]
+        if name in (SIGNATURE, "Nordrassil"):
+            bands[12]["enabled"] = False
+        if name == SIGNATURE:
+            bands.extend({"freq": f, "gain": g, "q": q, "kind": "PK", "enabled": True}
+                         for f, g, q in DEFINITION)
+    return sort_bands(model)
 
 
 def factory_presets():
     """Fresh models keep factory settings independent of preview edits."""
-    presets = {SIGNATURE: defaults(),
-               "Flat": {**defaults(), "name": "Flat", "banks": {"all": bank(True)}}}
-    for name, (preamp, gains, qualities) in VOICES.items():
-        model = defaults()
-        model.update(name=name, preamp=preamp)
-        for band_, gain, quality in zip(model["banks"]["all"]["bands"], gains, qualities):
-            band_.update(gain=gain, q=quality)
-        if name in SUB_BASS_CENTRES:
-            model["banks"]["all"]["bands"][0]["freq"] = SUB_BASS_CENTRES[name]
-        if name == "Nordrassil":
-            model["banks"]["all"]["bands"][12]["enabled"] = False
-        presets[name] = model
-    return {name: presets[name] for name in PRESET_ORDER}
+    return {name: defaults(name) for name in PRESET_ORDER}
+
+
+def current_preset_name(model):
+    """Relabel exact old factory curves for display without changing live audio."""
+    if model["name"] in (SIGNATURE, "Nordrassil", ANVIL, "Anvil Excess"):
+        # Match the curve, not the previous label: repeated launches must not
+        # toggle names after the Signature/Nordrassil swap.
+        for target in (SIGNATURE, "Nordrassil", ANVIL):
+            reference = defaults(target)
+            if (model["preamp"] == reference["preamp"] and
+                    sorted(model["banks"]["all"]["bands"], key=lambda b: b["freq"]) ==
+                    reference["banks"]["all"]["bands"]):
+                model = copy.deepcopy(model)
+                model["name"] = target
+                break
+    return model
 
 
 def machine_key():
@@ -149,6 +172,18 @@ def machine_key():
                         0, winreg.KEY_READ | winreg.KEY_WOW64_64KEY) as key:
         identity = winreg.QueryValueEx(key, "MachineGuid")[0]
     return hashlib.sha256(str(identity).encode()).hexdigest()
+
+
+def sort_bands(model):
+    """Stable frequency order; imported staged chains retain their DSP sequence.
+
+    The panel also sorts a view of staged chains, without moving filters across
+    preamp boundaries. Entire band records move together, including disabled ones.
+    """
+    for key, bank_ in model["banks"].items():
+        if key != "all" or not model.get("preamp_stages"):
+            bank_["bands"].sort(key=lambda b: b["freq"])
+    return model
 
 
 def validate(raw):
@@ -207,7 +242,7 @@ def validate(raw):
         if not math.isclose(sum(x["db"] for x in clean), result["preamp"], abs_tol=1e-9):
             raise ValueError("Preamp stages do not equal the displayed total")
         result["preamp_stages"] = clean
-    return result
+    return sort_bands(result)
 
 
 # ============================================================================
@@ -1242,7 +1277,7 @@ def serve(engine, port=0, open_browser=False, ready_file=None, on_ready=None, on
 
         def state_model(self):
             try:
-                return validate(engine.state["model"])
+                return current_preset_name(validate(engine.state["model"]))
             except (KeyError, ValueError, TypeError):
                 return None
 
@@ -1383,18 +1418,18 @@ header{padding:10px 14px;display:flex;align-items:center;justify-content:space-b
 @media(max-width:950px){.workspace{grid-template-columns:minmax(0,1fr) 218px}.band{min-width:36px}.lower{grid-template-columns:174px minmax(0,1fr)}.rail,.rail input{height:100px}.scale span:nth-child(2){top:78px}.scale span:nth-child(3){top:122px}.preamp small{display:none}}
 @media(max-width:760px){html,body{overflow:auto;height:auto;min-height:100%}.shell{display:block}.workspace{display:flex;flex-direction:column}.maincolumn,.rightcolumn{overflow:visible}.lower{min-height:0}.bands{min-width:620px}.rightcolumn{margin-top:10px}.topline{align-items:flex-start}.topline .actions{justify-content:flex-end}.title{font-size:14px}.tag{display:none}header{padding:8px 12px}.footer{margin-bottom:6px}}
 </style></head><body>
-<header><div class="brand"><div class="logo" aria-hidden="true"><i></i><i></i><i></i><i></i></div><div><h1>BRAVADO</h1><div class="tag muted">Precision equalizer / Desktop · 0.8.6</div></div></div><div class="actions"><span class="badge" id="modeBadge">NATIVE APO</span><button id="helpBtn">Help</button><button class="danger" id="panicBtn" title="Mute Windows playback endpoints and latch protection">Mute <small>Esc</small></button></div></header>
+<header><div class="brand"><div class="logo" aria-hidden="true"><i></i><i></i><i></i><i></i></div><div><h1>BRAVADO</h1><div class="tag muted">Precision equalizer / Desktop · 0.8.9</div></div></div><div class="actions"><span class="badge" id="modeBadge">NATIVE APO</span><button id="helpBtn">Help</button><button class="danger" id="panicBtn" title="Mute Windows playback endpoints and latch protection">Mute <small>Esc</small></button></div></header>
 <main class="shell"><div id="message" class="message" role="status" aria-live="polite"></div>
 <div class="topline"><div><div class="tag muted">PRESET</div><div class="title" id="presetTitle">Bravado Signature Preset</div><span class="dirty" id="dirty">Ready to apply</span></div><div class="actions"><button id="connectBtn" class="primary">Enable</button><button id="disableBtn">Disable</button><button id="applyBtn">Apply changes</button></div></div>
 <div class="workspace"><div class="maincolumn"><div class="panel"><div class="panelhead"><h2>Parametric equalizer</h2><div class="actions"><span class="muted" id="bankLabel">All speakers</span><label class="switchlabel"><input type="checkbox" id="bypass">Bypass EQ</label></div></div>
 <div class="preamp"><span>Preamp</span><input id="preamp" type="range" min="-60" max="30" step="0.1" value="0" aria-label="Requested preamp"><input id="preampN" type="number" min="-60" max="30" step="0.1" value="0" aria-label="Preamp in dB"><small>dB total <span id="stageNote"></span></small></div>
-<div class="bandwrap"><div class="bands" id="bands"></div></div><div class="tools"><button class="small" id="slot1">Set 1</button><button class="small" id="slot2">Set 2</button><button class="small" id="slot3">Set 3</button><button class="small" id="slot4">Set 4</button><button class="small" id="flattenBtn">Flatten</button><button class="small" id="expandBtn">Expand ×1.1</button><button class="small" id="compressBtn">Compress ×0.9</button><button class="small" id="downBtn">−1 dB</button><button class="small" id="upBtn">+1 dB</button><button class="small" id="addBtn">+ Band</button><button class="small" id="removeBtn">− Last band</button><span class="muted" style="margin-left:auto;font-size:11px">Shift-click Set to store · double-click fader to reset</span></div></div>
+<div class="bandwrap"><div class="bands" id="bands"></div></div><div class="tools"><button class="small" id="slot1">Set 1</button><button class="small" id="slot2">Set 2</button><button class="small" id="slot3">Set 3</button><button class="small" id="slot4">Set 4</button><button class="small" id="sortBtn" title="Arrange bands from low to high frequency">Sort bands</button><button class="small" id="flattenBtn">Flatten</button><button class="small" id="expandBtn">Expand ×1.1</button><button class="small" id="compressBtn">Compress ×0.9</button><button class="small" id="downBtn">−1 dB</button><button class="small" id="upBtn">+1 dB</button><button class="small" id="addBtn">+ Band</button><button class="small" id="removeBtn">− Last band</button><span class="muted" style="margin-left:auto;font-size:11px">Shift-click Set to store · double-click fader to reset</span></div></div>
 
 <div class="bottom"><section class="panel meterpanel"><div class="statrow"><span>Output peak</span><span id="peakLabel">—</span></div><div class="meter"><div id="meterFill"></div></div><p class="note">Read-only endpoint meter. Does not prove APO is installed on the device or measure acoustic loudness.</p></section></div>
 <div class="lower"><section class="panel"><div class="panelhead"><h2>Preset library</h2><small>Presets</small></div><div id="presets" class="presetlist"></div><div class="librarytools"><button class="small" id="saveBtn">Save as…</button><button class="small" id="deleteBtn">Delete</button></div><details class="exchange control-help"><summary>Import &amp; export</summary><div class="actions"><button class="small" id="currentBtn">Load current APO</button><button class="small" id="importBtn">Import</button><button class="small" id="jsonBtn">Save JSON</button><button class="small" id="exportBtn">APO bundle</button></div><details class="control-help"><summary>Details</summary><p class="note">Bravado JSON, legacy peak presets, or strict APO/AutoEQ parametric text. Files stay on this computer.</p></details><input type="file" class="hidden" id="fileInput" accept=".json,.peace,.txt"></details></section><section class="panel"><div class="panelhead"><h2>Frequency response</h2><small id="graphStats">Calculating response…</small></div><div class="graphbody"><canvas id="graph" aria-label="Frequency response graph at 48 kHz" role="img"></canvas><div class="legend"><span><b></b>EQ shape</span><span><b class="protected"></b>Output, selected bank</span><span>EQ response · 48 kHz</span></div></div></section></div>
 </div><div class="rightcolumn"><aside class="panel aside"><section><h2>Output & speaker</h2><select id="device" aria-label="Playback device"><option value="all">All APO playback devices</option></select><select id="channel" aria-label="Speaker bank"><option value="all">All speakers</option><option value="L">Left</option><option value="R">Right</option><option value="C">Center</option><option value="LFE">Subwoofer</option><option value="RL">Left rear</option><option value="RR">Right rear</option><option value="SL">Left side</option><option value="SR">Right side</option></select><details class="control-help"><summary>Speaker adjustments</summary><div class="field"><label for="trim">Speaker trim · dB</label><input type="number" id="trim" min="-60" max="0" step="0.1"></div><div class="field"><label for="delay">Delay · ms</label><input type="number" id="delay" min="0" max="200" step="0.1"></div><div class="field"><label for="speakerMute">Mute this bank</label><input type="checkbox" id="speakerMute"></div><details class="control-help"><summary>Details</summary><p class="note">Individual speaker banks add correction after the All speakers curve. Processing follows the selected mode.</p></details></details></section>
 <section><h2>Space &amp; level</h2><div class="separation-control"><div class="field"><label for="separation">Separation</label><output id="separationValue" for="separation">Original · 0</output></div><input id="separation" type="range" min="-100" max="100" step="1" value="0" aria-label="Separation" aria-describedby="separationNote" title="Double-click to reset to Original"><div class="separation-scale" aria-hidden="true"><span>Mono</span><span>Original</span><span>Wide</span></div><details class="control-help"><summary>Details</summary><p class="note" id="separationNote">Left narrows to mono. Right tightens stereo bass, widens upper frequencies and adds gentle center presence. Front L/R only, after Room and speaker correction; muted banks stay muted. Double-click to reset. Apply to hear edits.</p></details></div><button id="roomBtn" aria-pressed="false" style="width:100%">Stereo Room · Off</button><div class="field"><label for="room_amount">Room amount · %</label><input id="room_amount" type="number" min="0" max="40" step="1" value="20"></div><details class="control-help"><summary>Details</summary><p class="note" id="roomNote">Short stereo ambience with an immediate dry sound. Adjust the amount to blend in reflections.</p></details><div class="field"><label for="double_track">Aligned double · +6.02 dB</label><input type="checkbox" id="double_track"></div><div class="field"><label for="bass_track">Bass double · below 120 Hz</label><input type="checkbox" id="bass_track"></div><div class="field"><label for="bass_delay">Bass sync delay · ms</label><input id="bass_delay" type="number" min="0" max="10" step="0.01" value="0"></div><details class="control-help"><summary>Details</summary><p class="note" id="bassNote">Original sound plus a 120 Hz low-pass copy. Zero added delay by default; small delays change phase and can cancel bass.</p></details><p class="note" id="doubleNote" role="status">Aligned double: +6.02 dB across all frequencies. Bass double: an extra low-pass copy. Apply to hear changes.</p></section><section><h2>Gain controls</h2><div class="field"><label for="output">Output trim · dB</label><input id="output" type="number" min="-60" max="0" step="0.1" value="-6"></div><div class="field"><label for="rumble">25 Hz rumble filter</label><input type="checkbox" id="rumble"></div><details class="control-help"><summary>Details</summary><p class="note"><span id="modeNote">Reduce preamp or output trim if you hear distortion.</span></p></details><button class="small hidden" id="ackBtn" style="margin-top:10px">Acknowledge safety latch</button></section>
-</aside><section class="panel status"><div id="statusTitle">Preview mode</div><div id="statusText">Bravado EQ has not been enabled.</div><details class="control-help"><summary>Connection tools</summary><div class="actions" style="margin-top:7px"><button class="small" id="restoreBtn" title="Restore previous APO config…">Restore config…</button><button class="small" id="refreshBtn">Refresh devices</button><button class="small" id="adminEnableBtn" title="Enable as administrator">Admin enable</button><button class="small" id="adminDisableBtn" title="Disable as administrator">Admin disable</button><button class="small" id="deviceSetupBtn" title="Configure output device…">Device setup…</button><button class="small" id="testBtn" title="Quiet 440 Hz test">440 Hz test</button><button class="small" id="quitBtn">Close Bravado</button></div></details></section></div></div><div class="footer"><span>Bravado · 0.8.6</span><span>Ctrl+Enter Apply · Ctrl+S Save preset</span></div>
+</aside><section class="panel status"><div id="statusTitle">Preview mode</div><div id="statusText">Bravado EQ has not been enabled.</div><details class="control-help"><summary>Connection tools</summary><div class="actions" style="margin-top:7px"><button class="small" id="restoreBtn" title="Restore previous APO config…">Restore config…</button><button class="small" id="refreshBtn">Refresh devices</button><button class="small" id="adminEnableBtn" title="Enable as administrator">Admin enable</button><button class="small" id="adminDisableBtn" title="Disable as administrator">Admin disable</button><button class="small" id="deviceSetupBtn" title="Configure output device…">Device setup…</button><button class="small" id="testBtn" title="Quiet 440 Hz test">440 Hz test</button><button class="small" id="quitBtn">Close Bravado</button></div></details></section></div></div><div class="footer"><span>Bravado · 0.8.9</span><span>Ctrl+Enter Apply · Ctrl+S Save preset</span></div>
 </main>
 <dialog id="confirmDialog"><h2 id="dialogTitle"></h2><div id="dialogBody"></div><div class="actions"><button id="cancelDialog">Cancel</button><button class="primary" id="okDialog">Continue</button></div></dialog>
 <dialog id="helpDialog"><h2>Make it your sound</h2><p>Choose a preset, adjust the curve, then select <b>Apply changes</b>. Enable connects Bravado to Equalizer APO; Disable removes Bravado’s effects. Closing Bravado leaves your last applied sound active.</p><p><b>Preamp</b> adjusts the whole curve. Each band changes a frequency region; Q controls its width. Double-click a fader to reset it. Hold Shift while selecting a Set button to store your curve.</p><p><b>Separation</b> narrows to mono on the left; on the right it tightens stereo bass and widens upper frequencies. <b>Stereo Room</b> blends in short reflections. Both affect front left and right channels.</p><p><b>Aligned double</b> adds 6.02 dB across the spectrum. <b>Bass double</b> adds a low-frequency copy below 120 Hz; a delay changes its phase and may reduce bass. Room and bass doubling support standard rates from 44.1 to 192 kHz.</p><p>The graph shows the EQ response before Room and Separation. Output peak measures activity on the Windows default device. Positive gain can clip; lower preamp if you hear distortion.</p><p>Use <b>Connection tools → Device setup</b> if changes are inaudible. Equalizer APO must be installed on the playback device. <b>Esc</b> mutes playback in an emergency; acknowledge the mute before unmuting in Windows.</p><div class="actions"><button id="closeHelp">Done</button></div></dialog>
@@ -1411,10 +1446,11 @@ async function action(fn){if(busy)return;busy=true;for(const id of ['applyBtn','
 function dirty(){ $('dirty').textContent='Changes not applied';$('presetTitle').textContent=model.name; schedulePreview() }
 function bindNumber(id,get,set,min,max){$(id).onchange=()=>{let v=Number($(id).value);if(!Number.isFinite(v)||$(id).value.trim()===''||v<min||v>max){$(id).value=get();notify(`Value must be between ${min} and ${max}.`,true);return}set(v);dirty()}}
 function ensureBank(key){if(!model.banks[key]){model.banks[key]=copy(initial.banks.all);model.banks[key].bands.forEach(b=>{b.gain=0;b.q=1.41});model.banks[key].trim=0;model.banks[key].delay=0;model.banks[key].mute=false}}
-function renderBands(){const wrap=$('bands');wrap.replaceChildren();let axis=document.createElement('div');axis.className='scale';axis.innerHTML='<span>+30</span><span>0 dB</span><span>−30</span>';wrap.append(axis);model.banks[channel].bands.forEach((band,i)=>{const col=document.createElement('div');col.className='band'+(band.enabled?'':' disabled');
+function sortBands(p){for(const [key,bank] of Object.entries(p.banks)){if(key!=='all'||!p.preamp_stages)bank.bands.sort((a,b)=>a.freq-b.freq)}return p}
+function renderBands(){const wrap=$('bands');wrap.replaceChildren();let axis=document.createElement('div');axis.className='scale';axis.innerHTML='<span>+30</span><span>0 dB</span><span>−30</span>';wrap.append(axis);model.banks[channel].bands.slice().sort((a,b)=>a.freq-b.freq).forEach((band,i)=>{const col=document.createElement('div');col.className='band'+(band.enabled?'':' disabled');
 const numeric=(cls,field,min,max,step,label)=>{const n=document.createElement('input');n.type='number';n.className=cls;n.min=min;n.max=max;n.step=step;n.value=band[field];n.setAttribute('aria-label',`Band ${i+1} ${label}`);n.onchange=()=>{let v=Number(n.value);if(n.value===''||!Number.isFinite(v)||v<min||v>max){n.value=band[field];notify(`${label} must be ${min}–${max}`,true);return}band[field]=v;if(field==='gain')slider.value=v;dirty()};return n};
 col.append(numeric('freq','freq',10,20000,1,'frequency Hz'));let rail=document.createElement('div');rail.className='rail';let slider=document.createElement('input');slider.type='range';slider.min=-30;slider.max=30;slider.step=.1;slider.value=band.gain;slider.setAttribute('aria-label',`Band ${i+1} gain fader`);slider.oninput=()=>{band.gain=Number(slider.value);gain.value=band.gain.toFixed(1);dirty()};slider.ondblclick=()=>{band.gain=0;slider.value=0;gain.value=0;dirty()};rail.append(slider);col.append(rail);const gain=numeric('gain','gain',-30,30,.1,'gain dB');col.append(gain);let label=document.createElement('div');label.className='bandlabel';label.textContent='Q';col.append(label,numeric('quality','q',.25,12,.01,'quality Q'));let select=document.createElement('select');select.setAttribute('aria-label',`Band ${i+1} filter type`);for(const [value,name] of [['PK','Peak'],['LS','Low shelf'],['HS','High shelf'],['HP','High pass'],['LP','Low pass'],['NO','Notch']])select.add(new Option(name,value));select.value=band.kind;select.onchange=()=>{band.kind=select.value;dirty()};col.append(select);let check=document.createElement('input');check.type='checkbox';check.checked=band.enabled;check.className='enable';check.setAttribute('aria-label',`Enable band ${i+1}`);check.onchange=()=>{band.enabled=check.checked;col.classList.toggle('disabled',!band.enabled);dirty()};col.append(check);wrap.append(col)})}
-function render(){if(!model)return;ensureBank(channel);renderMode();$('presetTitle').textContent=model.name;$('preamp').value=$('preampN').value=model.preamp;for(const id of ['output'])$(id).value=model[id];for(const id of ['rumble','bypass','double_track','bass_track'])$(id).checked=!!model[id];renderEffects();$('device').value=model.device;$('channel').value=channel;for(const id of ['trim','delay'])$(id).value=model.banks[channel][id];$('speakerMute').checked=model.banks[channel].mute;$('bankLabel').textContent=$('channel').selectedOptions[0].text;renderBands();renderLibrary();schedulePreview()}
+function render(){if(!model)return;ensureBank(channel);sortBands(model);renderMode();$('presetTitle').textContent=model.name;$('preamp').value=$('preampN').value=model.preamp;for(const id of ['output'])$(id).value=model[id];for(const id of ['rumble','bypass','double_track','bass_track'])$(id).checked=!!model[id];renderEffects();$('device').value=model.device;$('channel').value=channel;for(const id of ['trim','delay'])$(id).value=model.banks[channel][id];$('speakerMute').checked=model.banks[channel].mute;$('bankLabel').textContent=$('channel').selectedOptions[0].text;renderBands();renderLibrary();schedulePreview()}
 function renderMode(){$('modeBadge').textContent='NATIVE APO';$('modeNote').textContent='Reduce preamp or output trim if you hear distortion.';$('stageNote').textContent=model.preamp_stages?'· stages '+model.preamp_stages.map(s=>s.db+' dB before band '+(s.before+1)).join(' / '):''}
 function renderEffects(){renderSeparation();$('bass_delay').value=model.bass_delay??0;$('bass_delay').disabled=!model.bass_track;$('bassNote').textContent=model.bypass&&model.bass_track?'Bass double bypassed with EQ.':'Adds a low-frequency copy below 120 Hz. Delay changes its phase and may reduce bass.';const on=!!model.room;$('roomBtn').setAttribute('aria-pressed',String(on));$('roomBtn').textContent='Stereo Room · '+(on?'On':'Off');$('room_amount').value=model.room_amount??20;$('room_amount').disabled=!on;$('roomNote').textContent=model.bypass&&on?'Room bypassed with EQ. Turn off Bypass and Apply to hear it.':'Short ambience on front L/R · 44.1–192 kHz standard rates. Adjust the amount to blend in reflections.';$('doubleNote').textContent='Aligned double: +6.02 dB across all frequencies. Bass double: an extra low-pass copy. Apply to hear changes.'}
 function renderSeparation(){const v=model.separation??0;const label=v===0?'Original · 0':v===-100?'Mono · −100':v<0?'Narrow · '+v:'Wide · +'+v;$('separation').value=v;$('separationValue').textContent=label+(model.bypass?' · bypassed':'');$('separation').setAttribute('aria-valuetext',label+(model.bypass?', bypassed':''))}
@@ -1439,8 +1475,9 @@ for(const [id,min,max] of [['output',-60,0]])bindNumber(id,()=>model[id],v=>mode
 for(const [id,min,max] of [['trim',-60,0],['delay',0,200]])bindNumber(id,()=>model.banks[channel][id],v=>model.banks[channel][id]=v,min,max);
 for(const id of ['rumble','bypass'])$(id).onchange=()=>{model[id]=$(id).checked;renderEffects();dirty()};$('speakerMute').onchange=()=>{model.banks[channel].mute=$('speakerMute').checked;dirty()};
 function transform(fn){model.banks[channel].bands.forEach(b=>b.gain=Math.round(clamp(fn(b.gain),-30,30)*10)/10);renderBands();dirty()}
+$('sortBtn').onclick=()=>{sortBands(model);renderMode();renderBands()};
 $('flattenBtn').onclick=()=>{model.banks[channel].bands.forEach(b=>{b.gain=0;b.kind='PK'});renderBands();dirty()};$('expandBtn').onclick=()=>transform(v=>v*1.1);$('compressBtn').onclick=()=>transform(v=>v*.9);$('downBtn').onclick=()=>transform(v=>v-1);$('upBtn').onclick=()=>transform(v=>v+1);
-$('addBtn').onclick=()=>{const bands=model.banks[channel].bands;if(bands.length===32)return notify('Maximum 32 bands per speaker bank',true);bands.push({freq:1000,gain:0,q:1.41,kind:'PK',enabled:true});renderBands();dirty()};$('removeBtn').onclick=()=>{if(model.banks[channel].bands.length>1){model.banks[channel].bands.pop();if(channel==='all')delete model.preamp_stages;renderMode();renderBands();dirty()}};
+$('addBtn').onclick=()=>{const bands=model.banks[channel].bands;if(bands.length===32)return notify('Maximum 32 bands per speaker bank',true);bands.push({freq:1000,gain:0,q:1.41,kind:'PK',enabled:true});renderBands();dirty()};$('removeBtn').onclick=()=>{if(model.banks[channel].bands.length>1){const bands=model.banks[channel].bands;const last=bands.slice().sort((a,b)=>a.freq-b.freq).at(-1);bands.splice(bands.indexOf(last),1);if(channel==='all')delete model.preamp_stages;renderMode();renderBands();dirty()}};
 async function apply(enable=false,admin=false){const snapshot=copy(model);notify(admin?'Approve the Windows administrator prompt. Applying and verifying configuration…':'Applying changes…');const result=await api(admin?'enable-admin':enable?'enable':'apply',{model:snapshot});notify(result.message);$('dirty').textContent=JSON.stringify(model)===JSON.stringify(snapshot)?'Changes applied':'New changes not applied';showState(await api('status'))}
 $('applyBtn').onclick=()=>action(()=>apply());$('connectBtn').onclick=()=>action(()=>apply(true));
 $('adminEnableBtn').onclick=()=>action(()=>apply(true,true));
@@ -1452,16 +1489,16 @@ $('ackBtn').onclick=()=>action(async()=>{notify((await api('acknowledge',{})).me
 $('restoreBtn').onclick=()=>confirmAction('Restore the previous audio configuration','Restore the audio configuration saved before Bravado was enabled? This replaces your currently applied sound.',async()=>{notify((await api('restore',{})).message);showState(await api('status'))});
 $('refreshBtn').onclick=()=>action(load);
 $('quitBtn').onclick=()=>confirmAction('Close Bravado','Your last applied audio settings will remain active.',async()=>notify((await api('shutdown',{})).message));
-for(let i=1;i<=4;i++){$('slot'+i).title='Load saved set; Shift-click to store current curve';$('slot'+i).onclick=e=>{const name='Set '+i;if(e.shiftKey||!library[name]){action(async()=>{const saved=copy(model);saved.name=name;await api('save',{model:saved});library[name]=saved;renderLibrary();notify(`Current curve stored in ${name}. Click to recall; Shift-click to replace.`)})}else{model=copy(library[name]);channel='all';render();dirty()}}}
+for(let i=1;i<=4;i++){$('slot'+i).title='Load saved set; Shift-click to store current curve';$('slot'+i).onclick=e=>{const name='Set '+i;if(e.shiftKey||!library[name]){action(async()=>{const saved=sortBands(copy(model));saved.name=name;await api('save',{model:saved});library[name]=saved;renderLibrary();notify(`Current curve stored in ${name}. Click to recall; Shift-click to replace.`)})}else{model=copy(library[name]);channel='all';render();dirty()}}}
 let testContext=null;
 $('testBtn').onclick=()=>action(async()=>{if(testContext)await testContext.close();testContext=new AudioContext();await testContext.resume();const osc=testContext.createOscillator(),gain=testContext.createGain(),now=testContext.currentTime;osc.frequency.value=440;gain.gain.setValueAtTime(0,now);gain.gain.linearRampToValueAtTime(10**(-42/20),now+.05);gain.gain.setValueAtTime(10**(-42/20),now+.7);gain.gain.linearRampToValueAtTime(0,now+.8);osc.connect(gain).connect(testContext.destination);osc.start(now);osc.stop(now+.85);notify('Playing a short 440 Hz sine at −42 dBFS before system effects. It may be inaudible when Windows is muted.');osc.onended=()=>{testContext?.close();testContext=null}});
 
 function download(blob,name){let url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),5000)}
-$('jsonBtn').onclick=()=>download(new Blob([JSON.stringify(model,null,2)],{type:'application/json'}),'bravado-preset.json');$('exportBtn').onclick=()=>action(async()=>{notify('Building portable APO bundle…');download(await api('export',{model}),'bravado-apo-bundle.zip');notify('Bundle exported with filters.txt, preset and report. Room and bass effects include their WAV assets.')});
+$('jsonBtn').onclick=()=>download(new Blob([JSON.stringify(sortBands(copy(model)),null,2)],{type:'application/json'}),'bravado-preset.json');$('exportBtn').onclick=()=>action(async()=>{notify('Building portable APO bundle…');download(await api('export',{model}),'bravado-apo-bundle.zip');notify('Bundle exported with filters.txt, preset and report. Room and bass effects include their WAV assets.')});
 $('currentBtn').onclick=()=>action(async()=>{const r=await api('current');model=r.model;channel='all';render();dirty();notify('Current configuration loaded as preview. '+r.warnings.join(' '))});
 $('importBtn').onclick=()=>$('fileInput').click();$('fileInput').onchange=()=>action(async()=>{let f=$('fileInput').files[0];if(!f)return;if(f.size>250000)throw Error('Preset exceeds 250 kB');const r=await api('import',{text:await f.text()});model=r.model;channel='all';render();dirty();notify(r.warnings.join('\n')||'Preset imported as preview.');$('fileInput').value='' });
 $('saveBtn').onclick=()=>{$('presetName').value=Object.hasOwn(factoryNotes,model.name)?'My preset':model.name;$('saveDialog').showModal();$('presetName').focus();$('presetName').select()};
-$('cancelSave').onclick=()=>$('saveDialog').close();$('confirmSave').onclick=()=>{const name=$('presetName').value.trim();if(!name){$('presetName').focus();return}action(async()=>{const saved=copy(model);saved.name=name;await api('save',{model:saved});model=saved;library[name]=copy(saved);$('saveDialog').close();render();notify('Preset saved.')})};$('presetName').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();$('confirmSave').click()}};
+$('cancelSave').onclick=()=>$('saveDialog').close();$('confirmSave').onclick=()=>{const name=$('presetName').value.trim();if(!name){$('presetName').focus();return}action(async()=>{const saved=sortBands(copy(model));saved.name=name;await api('save',{model:saved});model=saved;library[name]=copy(saved);$('saveDialog').close();render();notify('Preset saved.')})};$('presetName').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();$('confirmSave').click()}};
 $('deleteBtn').onclick=()=>{if(Object.hasOwn(factoryNotes,model.name))return notify('Built-in presets cannot be deleted.');confirmAction('Delete preset',`Delete “${model.name}” from your local library?`,async()=>{await api('save',{model,delete:true});delete library[model.name];renderLibrary();notify('Preset removed from the library.')})};
 
 document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!document.querySelector('dialog[open]')){e.preventDefault();$('panicBtn').click()}if(e.ctrlKey&&e.key==='Enter'){e.preventDefault();$('applyBtn').click()}if(e.ctrlKey&&e.key.toLowerCase()==='s'){e.preventDefault();$('saveBtn').click()}});
@@ -1727,7 +1764,7 @@ def self_test(stream=None):
                     request = urllib.request.Request(f"http://{url.netloc}/api/state",
                                                      headers={"X-Bravado-Token": url.fragment})
                     with urllib.request.urlopen(request, timeout=2) as reply:
-                        self.assertEqual(json.load(reply)["presets"][SIGNATURE]["preamp"], 0)
+                        self.assertEqual(json.load(reply)["presets"][SIGNATURE]["preamp"], 1.4)
                 gui.start.side_effect = start
                 with patch.dict(sys.modules, {"webview": gui, "webview.guilib": SimpleNamespace(initialize=Mock()),
                                               "System.Windows.Forms": forms}):
@@ -1746,13 +1783,13 @@ def self_test(stream=None):
                     self.assertFalse(e.status()["owned"])
                     with self.assertRaisesRegex(ValueError, "Equalizer APO"):
                         e.enable(defaults())
-                    self.assertEqual(preview(defaults(), "all")["stats"]["requested_db"], 0)
+                    self.assertEqual(preview(defaults(), "all")["stats"]["requested_db"], 1.4)
 
         def test_factory_presets(self):
             presets = factory_presets()
-            self.assertEqual(list(presets), [SIGNATURE, "Pocket Physics", "Flat", "Nordrassil", "Marble Alibi", "Red Herring"])
+            self.assertEqual(list(presets), [SIGNATURE, "Pocket Physics", "Flat", "Nordrassil", "Marble Alibi", "Red Herring", ANVIL])
             self.assertEqual(set(presets), set(PRESET_NOTES))
-            self.assertEqual(presets[SIGNATURE]["preamp"], 0)
+            self.assertEqual(presets[SIGNATURE]["preamp"], 1.4)
             flat = presets["Flat"]
             self.assertEqual(flat["preamp"], 0)
             files, report = compile_bundle(flat)
@@ -1760,7 +1797,7 @@ def self_test(stream=None):
             self.assertNotIn(b"Convolution:", files["filters.txt"])
             self.assertNotIn(b"Copy:", files["filters.txt"])
             presets[SIGNATURE]["banks"]["all"]["bands"][0]["gain"] = -30
-            self.assertEqual(factory_presets()[SIGNATURE]["banks"]["all"]["bands"][0]["gain"], GAINS[0])
+            self.assertEqual(factory_presets()[SIGNATURE]["banks"]["all"]["bands"][0]["gain"], 2.8)
 
         def test_factory_voice_response(self):
             # Validate the complete tonal contour: overlapping peaks change the result.
@@ -1867,8 +1904,82 @@ def self_test(stream=None):
                     _, a = coefficients(band_, rate)
                     self.assertLess(float(np.max(np.abs(np.roots(a)))), 1)
 
+        def test_definition_preserves_foundation(self):
+            reference = defaults("Nordrassil")
+            model = defaults()
+            original = reference["banks"]["all"]["bands"]
+            bands = model["banks"]["all"]["bands"]
+            self.assertEqual([b for b in bands if b["freq"] not in {f for f, _, _ in DEFINITION}], original)
+            self.assertEqual(len(bands), 17)
+            self.assertEqual(model["preamp"], 1.4)
+            for rate in RATES:
+                f = np.geomspace(20, 20000, 20000)
+                before = response(original, f, rate)
+                after = response(bands, f, rate)
+                delta = 20*np.log10(abs(after/before))
+                self.assertLess(float(np.max(abs(delta[f <= 120]))), .16)
+                self.assertLess(float(np.max(abs(after))), float(np.max(abs(before))))
+                points = 20*np.log10(abs(response(bands, [420, 2100, 6000], rate) /
+                                         response(original, [420, 2100, 6000], rate)))
+                self.assertLess(points[0], -2.3)
+                self.assertTrue(.8 < points[1] < 1)
+                self.assertTrue(1.1 < points[2] < 1.4)
+                for band_ in bands:
+                    coefficients(band_, rate)  # Reject unstable poles.
+
+        def test_band_sort_preserves_records_and_response(self):
+            model = defaults("Nordrassil")
+            model["banks"]["all"]["bands"].reverse()
+            duplicate = dict(model["banks"]["all"]["bands"][3], gain=-1.7, kind="HS")
+            model["banks"]["all"]["bands"].append(duplicate)
+            model["banks"]["L"] = copy.deepcopy(model["banks"]["all"])
+            before = copy.deepcopy(model)
+            after = validate(model)
+            self.assertEqual(model, before)  # Validation must not mutate its caller.
+            for key, bank_ in after["banks"].items():
+                self.assertEqual(bank_["bands"], sorted(before["banks"][key]["bands"], key=lambda b: b["freq"]))
+                for rate in RATES:
+                    f = np.geomspace(20, 20000, 1024)
+                    np.testing.assert_allclose(response(bank_["bands"], f, rate),
+                                               response(before["banks"][key]["bands"], f, rate), rtol=1e-12, atol=1e-12)
+            for preset in factory_presets().values():
+                bands = preset["banks"]["all"]["bands"]
+                self.assertEqual(bands, sorted(bands, key=lambda b: b["freq"]))
+
+        def test_band_sort_preserves_staged_chain(self):
+            model = defaults()
+            model["banks"]["all"]["bands"].reverse()
+            model["preamp_stages"] = [{"before": 0, "db": -2}, {"before": 4, "db": 3.4}]
+            before = copy.deepcopy(model)
+            self.assertEqual(validate(model)["banks"], before["banks"])
+            self.assertEqual(validate(model)["preamp_stages"], before["preamp_stages"])
+
+        def test_anvil_and_legacy_labels(self):
+            anvil = defaults(ANVIL)
+            self.assertEqual(anvil["preamp"], 0)
+            self.assertEqual(anvil["banks"]["all"], bank())
+            self.assertEqual(current_preset_name({**anvil, "name": "Anvil Excess"})["name"], ANVIL)
+            old_signature = {**anvil, "name": SIGNATURE}
+            self.assertEqual(current_preset_name(old_signature)["name"], ANVIL)
+            self.assertEqual(old_signature["name"], SIGNATURE)
+            old_nord = {**defaults(), "name": "Nordrassil"}
+            self.assertEqual(current_preset_name(old_nord)["name"], SIGNATURE)
+            old_signature = {**defaults("Nordrassil"), "name": SIGNATURE}
+            self.assertEqual(current_preset_name(old_signature)["name"], "Nordrassil")
+            for name in PRESET_ORDER:
+                self.assertEqual(current_preset_name(defaults(name))["name"], name)
+                canonical = current_preset_name(defaults(name))
+                self.assertEqual(current_preset_name(canonical), canonical)
+            edited = copy.deepcopy(old_nord)
+            edited["banks"]["all"]["bands"][0]["gain"] += .1
+            self.assertEqual(current_preset_name(edited)["name"], "Nordrassil")
+            custom = {**old_nord, "name": "My Nord"}
+            self.assertEqual(current_preset_name(custom)["name"], "My Nord")
+            imported, _ = import_preset("Filter: ON PK Fc 100 Hz Gain 2 dB Q 1")
+            self.assertEqual(imported["preamp"], 0)
+
         def test_factory_voice_exports(self):
-            for name in VOICES:
+            for name in PRESET_ORDER:
                 model = factory_presets()[name]
                 files, _ = compile_bundle(model)
                 text = files["filters.txt"].decode()
@@ -1888,7 +1999,7 @@ def self_test(stream=None):
                 self.assertEqual(model["separation"], 0)
                 self.assertFalse(any(model[k] for k in ("room", "rumble", "double_track", "bass_track")))
                 model["banks"]["all"]["bands"][0]["gain"] = 30
-                self.assertEqual(factory_presets()[name]["banks"]["all"]["bands"][0]["gain"], VOICES[name][1][0])
+                self.assertEqual(factory_presets()[name]["banks"]["all"]["bands"][0]["gain"], defaults(name)["banks"]["all"]["bands"][0]["gain"])
 
         def test_machine_sessions_do_not_travel(self):
             from unittest.mock import patch
@@ -2147,8 +2258,9 @@ def self_test(stream=None):
 
         def test_reference(self):
             m = validate(defaults())
-            self.assertEqual([b["gain"] for b in m["banks"]["all"]["bands"]], GAINS)
-            self.assertEqual(m["preamp"], 0)
+            self.assertEqual([b["gain"] for b in m["banks"]["all"]["bands"]],
+                             [2.8, 4.5, 2.8, 6, 5.7, 4, -2.4, 0, 4.8, 4.6, .9, -4.3, 2.8, 1.2, 6, -4, -5])
+            self.assertEqual(m["preamp"], 1.4)
             self.assertEqual(m["name"], SIGNATURE)
 
         def test_validation(self):

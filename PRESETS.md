@@ -2,105 +2,88 @@
 
 ## Choose and compare
 
-1. Library order: **Signature → Pocket Physics → Flat → Nordrassil → Marble Alibi → Red Herring**.
-   Choose **Nordrassil** for broad strength between Signature's fullness and Pocket's punch.
-2. Select a preset. Click **Apply changes**, or **Enable** when disconnected.
-3. Compare the same passage at matched listening volume. **Flat** is the reference.
-4. Edit frequency, Q and gain to suit the device. **Save as** keeps a personal copy.
+1. Choose **Nordrassil** for body and depth; **Signature** for that foundation with
+   clearer lower mids and more focused articulation. **Flat** is the reference.
+2. Select a preset, then click **Apply changes** or **Enable**.
+3. Compare the same passage at matched listening volume. **Save as** keeps personal edits.
 
-Nordrassil uses an explicit **+1.4 dB** preamp; the other five remain at **0 dB**.
-All five existing presets retain their exact settings. Room, Separation,
-doubling, delay, rumble filtering and output trim are off/zero in the factory presets.
-The alternatives are assertive tonal choices, not universal device corrections.
-Positive EQ boosts need playback headroom; lower the editable preamp if distortion
-appears. No automatic attenuation, limiter or ceiling is added.
+Library order: **Signature → Pocket Physics → Flat → Nordrassil → Marble Alibi → Red Herring → Silent Anvil**.
 
-## Nordrassil
+## Version 0.8.9
 
-Nordrassil combines full bass and lower-mid body with a shaped 3 kHz dip and
-defined 9 kHz detail. Its preamp is **+1.4 dB**. The 16 kHz band is **disabled**;
-its stored −4 dB gain and Q 1.2 remain available if you choose to enable it.
-The 20 kHz cut stays enabled. Room, Separation and doubling are off.
+Bands display from low to high frequency. **Sort bands** is always available in
+the equalizer toolbar; saved presets and sets sort automatically. Imported preamp
+stages retain their processing sequence while their controls display in frequency order.
 
-The following 48 kHz comparison includes preamp and enabled filters only.
-Mean-square gain is calculated over 20 Hz–20 kHz for pink noise (equal energy
-per octave) and white noise (equal energy per Hz). Values describe electrical
-signal gain, not LUFS, acoustic loudness or a controlled listening result.
+- **Bravado Signature Preset** is the 17-band Nordrassil from 0.8.8, unchanged in sound.
+- **Nordrassil** is the 14-band Signature from 0.8.8, unchanged in sound.
+- **Silent Anvil** is the original Bravado Signature, unchanged in sound.
+- Pocket Physics, Flat, Marble Alibi and Red Herring are unchanged.
 
-| Preset | Pink-noise gain | White-noise gain | Maximum frequency-response gain |
+Signature and Nordrassil have **+1.4 dB preamp**. All other factory preamps are **0 dB**.
+Room, Separation, doubling, delay, rumble filtering and output trim are off/zero.
+The 16 kHz band in Signature and Nordrassil remains disabled, with its stored
+−4 dB gain and Q 1.2 preserved. The 20 kHz cut remains enabled.
+
+Existing applied settings do not change on launch. An exact old factory curve
+receives its current name in the panel; edited and personally named curves are retained.
+Choose and apply Signature to hear its additional filters.
+
+## Signature definition layer
+
+| Additional peak | Gain | Q | Intent |
+| --- | ---: | ---: | --- |
+| 420 Hz | −2.4 dB | 1.2 | Relieve overlapping lower-mid weight |
+| 2100 Hz | +0.9 dB | 2.2 | Add focused articulation |
+| 6000 Hz | +1.2 dB | 2.0 | Support attack and texture below the 9 kHz emphasis |
+
+These are editable bands at 420, 2100 and 6000 Hz, shown in frequency order. Disable all three
+to recover Nordrassil's exact curve. Native APO peak filters preserve the complete
+frequency/gain/Q definitions; no second audio stream, plugin, new ceiling or
+automatic attenuation is introduced.
+
+Calculated at 48 kHz, 90 Hz changes by −0.08 dB and 160 Hz by −0.29 dB. The total
+500 Hz response falls from +4.46 to +2.44 dB. At six standard rates from 44.1 to
+192 kHz, the change below 120 Hz stays within 0.16 dB. Maximum steady-state response
+is approximately +9.62 dB versus Nordrassil's +9.71 dB. These calculations do not
+certify transient headroom, acoustic improvement or speaker protection. Positive
+boosts can still clip; lower the editable preamp if distortion appears.
+
+The layer is an authored listening candidate. No controlled listening panel or
+device measurement establishes universal superiority. Avoid equating added
+brightness or increased level with improved detail.
+
+## Calculated gain
+
+48 kHz, including preamp and enabled filters, integrated over 20 Hz–20 kHz.
+Pink noise has equal energy per octave; white noise has equal energy per Hz.
+These electrical estimates are not LUFS or acoustic loudness.
+
+| Preset | Pink-noise gain | White-noise gain | Maximum response |
 | --- | ---: | ---: | ---: |
-| Bravado Signature Preset | +5.26 dB | +1.66 dB | +10.20 dB |
+| Bravado Signature Preset | +6.30 dB | +4.18 dB | +9.62 dB |
 | Pocket Physics | +4.36 dB | +1.18 dB | +10.03 dB |
 | Flat | -0.00 dB | -0.00 dB | +0.00 dB |
 | Nordrassil | +6.48 dB | +3.92 dB | +9.71 dB |
 | Marble Alibi | +3.66 dB | +1.76 dB | +8.27 dB |
 | Red Herring | +4.37 dB | +0.73 dB | +13.60 dB |
-
-The maximum response is about +9.7 dB, below Signature's +10.2 dB maximum.
-These are steady-state estimates; recording spectrum, transient peaks and
-downstream processing still determine clipping. Lower the visible preamp if
-playback distorts. No automatic attenuation, ceiling or limiter is added.
-
-All bands are **PK**. Only the 16 kHz band is disabled.
-
-| Hz | Gain dB | Q | State |
-| ---: | ---: | ---: | --- |
-| 24 | 2.8 | 1.2 | On |
-| 30 | 4.5 | 1.3 | On |
-| 50 | 2.8 | 2.5 | On |
-| 90 | 6 | 1.8 | On |
-| 160 | 5.7 | 1.6 | On |
-| 300 | 4 | 1.3 | On |
-| 500 | 0 | 1.8 | On |
-| 1000 | 4.8 | 1.2 | On |
-| 1600 | 4.6 | 1.6 | On |
-| 3000 | -4.3 | 1.3 | On |
-| 5000 | 2.8 | 1.5 | On |
-| 9000 | 6 | 1.7 | On |
-| 16000 | -4 | 1.2 | Off |
-| 20000 | -5 | 1.2 | On |
+| Silent Anvil | +5.26 dB | +1.66 dB | +10.20 dB |
 
 ## Other tonal directions
 
-| Preset | Main emphasis | Deliberate trade-off |
-| --- | --- | --- |
-| Marble Alibi | Forward 1–1.6 kHz voices, firm 90 Hz punch, broader treble articulation | Less deep-bass dominance and less 160 Hz density than the specialist alternatives |
-| Red Herring | Strongest 20–30 Hz weight, concentrated 90 Hz punch, deepest 500 Hz relief | Quieter vocal presence and restrained 5 kHz energy; 9 kHz remains distinct |
-| Pocket Physics | 24–30 Hz foundation, broad 90–160 Hz body, supported 300 Hz warmth, strongest/narrowest 9 kHz peak | Less deep-sub emphasis than Red; more body and treble contrast than Marble |
+- **Pocket Physics:** sub-bass foundation, dense 90–160 Hz body and focused 9 kHz detail.
+- **Marble Alibi:** forward voices, firm bass and broader treble articulation.
+- **Red Herring:** deepest bass weight, concentrated punch and relieved lower mids.
+- **Silent Anvil:** the original full-bodied, vivid Bravado curve.
 
-These are separate original contours. They are not gain-scaled copies of one
-curve. Frequency regions, bandwidths and bass-to-mid-to-treble balances differ.
-They use Signature's assertive scale while retaining their own tonal priorities.
-
-## Filter shape matters
-
-All bands use native APO **peak filters** (`PK`). Each has an explicit centre
-frequency, gain and **Q**. A higher Q concentrates a peak or dip around its centre;
-a lower Q spreads its influence. The audible result is the complete cascade, not
-the largest slider. See the [APO configuration reference](https://sourceforge.net/p/equalizerapo/wiki/Configuration%20reference/).
-
-- **Sub-bass:** Red adds a 20 Hz peak (+6 dB, Q 1.05) below its existing 30 Hz
-  peak. Pocket adds a 24 Hz peak (+4 dB, Q 1.6) and broadens its 30 Hz peak to
-  +7 dB, Q 2.2. Both reuse the previously neutral 10 Hz slot; Marble is unchanged.
-  These shapes fill 18–40 Hz without another 90 Hz boost or a large 50 Hz lift.
-- **90 Hz:** the main punch peak. Its Q differs by preset; Red concentrates the
-  attack region while Pocket overlaps more deliberately with 160 Hz body.
-- **50 Hz:** zero on Red and Pocket, +1 dB on Marble. Adjacent bands still add gain
-  there, but the combined response stays far below each preset's 90 Hz emphasis.
-- **500 Hz / 3 kHz:** defined peak cuts. The intervening vocal region stays present;
-  Marble deliberately brings it further forward.
-- **9 kHz:** a real peak in every alternative. Pocket's Q 3 gives the narrowest,
-  strongest focus. Marble combines its peak with more 5 kHz articulation.
-- **16 / 20 kHz:** Q 1.5 peak cuts restrain the upper treble without broadly
-  attenuating the 9 kHz region, including at higher sample rates.
-
-This is an authored balance, not evidence that particular frequencies are always
-bad or good. EQ multiplies the device and room response. These contours cannot
-reproduce a reference transducer or repair an acoustic cancellation universally.
+The contours use different gains and bandwidths. Filter overlap means a zero slider
+does not guarantee a flat total response at that frequency. Higher Q concentrates
+a peak or dip; lower Q spreads it. These are tonal choices, not universal device
+calibration or emulation of another manufacturer's hardware.
 
 ## APO and Reddit findings
 
-The alternatives use the same native APO peak-filter path as Signature.
+The alternatives use the same native APO peak-filter path as Silent Anvil.
 Their distinct characters come from the filter definitions, not another engine.
 Copying gain numbers alone is insufficient when filter type, frequency, Q or shelf
 convention differs. The revised exports preserve all of those parameters.
@@ -150,60 +133,165 @@ inform three directions rather than seven purported brand emulations.
 
 ## Exact settings
 
-For Marble, Red and Pocket, all 14 bands are enabled **PK** filters.
-Each cell is **gain dB / Q**. Nordrassil has its own table above.
-Source of truth: `VOICES` and `factory_presets()` in `bravado.py` in the matching source release.
+All factory bands use native APO **PK** filters. Values below include stored OFF bands.
+The source of truth is `defaults()` and the factory constants in the matching `bravado.py`.
 
-| Hz (Marble / Red / Pocket) | Marble Alibi | Red Herring | Pocket Physics |
-| ---: | ---: | ---: | ---: |
-| 10 / 20 / 24 | 0 / 0.71 | 6 / 1.05 | 4 / 1.6 |
-| 30 | 7 / 2.8 | 10 / 2.8 | 7 / 2.2 |
-| 50 | 1 / 2.5 | 0 / 2.5 | 0 / 2.5 |
-| 90 | 7.4 / 2.4 | 9 / 3.2 | 8 / 2.3 |
-| 160 | 4.8 / 2.3 | 4.8 / 2.2 | 8 / 2.3 |
-| 300 | 2.2 / 1.7 | 1.3 / 1.8 | 4 / 1.8 |
-| 500 | -2.8 / 2.1 | -4 / 1.9 | -4 / 2.1 |
-| 1000 | 5.8 / 1.8 | 3.2 / 1.8 | 3.5 / 2 |
-| 1600 | 6.5 / 2.2 | 4 / 2 | 3.7 / 2 |
-| 3000 | -5.5 / 1.8 | -4.8 / 1.6 | -4.5 / 1.6 |
-| 5000 | 4 / 2 | 1 / 2 | 1.6 / 2 |
-| 9000 | 5.8 / 2 | 6.8 / 2.6 | 8 / 3 |
-| 16000 | -4 / 1.5 | -4.5 / 1.5 | -4.5 / 1.5 |
-| 20000 | -5 / 1.5 | -5.5 / 1.5 | -5.5 / 1.5 |
+### Bravado Signature Preset
 
-## Compare with Signature
+Preamp: **+1.4 dB**.
 
-Combined digital response in dB at 48 kHz, **including preamp**. Equal graph scales;
-no visual exaggeration. These values include filter overlap.
+| Hz | Gain dB | Q | State |
+| ---: | ---: | ---: | --- |
+| 24 | 2.8 | 1.2 | On |
+| 30 | 4.5 | 1.3 | On |
+| 50 | 2.8 | 2.5 | On |
+| 90 | 6 | 1.8 | On |
+| 160 | 5.7 | 1.6 | On |
+| 300 | 4 | 1.3 | On |
+| 420 | -2.4 | 1.2 | On |
+| 500 | 0 | 1.8 | On |
+| 1000 | 4.8 | 1.2 | On |
+| 1600 | 4.6 | 1.6 | On |
+| 2100 | 0.9 | 2.2 | On |
+| 3000 | -4.3 | 1.3 | On |
+| 5000 | 2.8 | 1.5 | On |
+| 6000 | 1.2 | 2 | On |
+| 9000 | 6 | 1.7 | On |
+| 16000 | -4 | 1.2 | Off |
+| 20000 | -5 | 1.2 | On |
 
-| Preset | 20 Hz | 30 Hz | 50 Hz | 90 Hz | 160 Hz | 500 Hz | 1.2 kHz | 3 kHz | 9 kHz |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Bravado Signature Preset | +1.9 | +10.1 | +5.6 | +10.2 | +9.4 | +5.0 | +5.8 | -1.4 | +5.5 |
-| Marble Alibi | +1.3 | +7.4 | +2.7 | +8.3 | +6.0 | -1.2 | +6.1 | -3.8 | +5.7 |
-| Red Herring | +7.8 | +13.6 | +3.0 | +10.1 | +5.7 | -3.1 | +3.3 | -4.0 | +6.3 |
-| Pocket Physics | +4.8 | +9.9 | +2.9 | +9.5 | +9.6 | -2.4 | +3.4 | -3.6 | +7.5 |
+### Pocket Physics
 
-The earlier alternatives peaked around +1.2 to +1.6 dB including their negative
-preamps; these revisions operate on Signature's much stronger tonal scale. The
-change includes both contour and level. Match playback loudness when comparing
-their character; a higher curve alone is not evidence of higher audio quality.
+Preamp: **+0 dB**.
+
+| Hz | Gain dB | Q | State |
+| ---: | ---: | ---: | --- |
+| 24 | 4 | 1.6 | On |
+| 30 | 7 | 2.2 | On |
+| 50 | 0 | 2.5 | On |
+| 90 | 8 | 2.3 | On |
+| 160 | 8 | 2.3 | On |
+| 300 | 4 | 1.8 | On |
+| 500 | -4 | 2.1 | On |
+| 1000 | 3.5 | 2 | On |
+| 1600 | 3.7 | 2 | On |
+| 3000 | -4.5 | 1.6 | On |
+| 5000 | 1.6 | 2 | On |
+| 9000 | 8 | 3 | On |
+| 16000 | -4.5 | 1.5 | On |
+| 20000 | -5.5 | 1.5 | On |
+
+### Flat
+
+Preamp: **+0 dB**.
+
+| Hz | Gain dB | Q | State |
+| ---: | ---: | ---: | --- |
+| 10 | 0 | 2.5 | On |
+| 30 | 0 | 3.75 | On |
+| 50 | 0 | 2.5 | On |
+| 90 | 0 | 3 | On |
+| 160 | 0 | 2 | On |
+| 300 | 0 | 1.41 | On |
+| 500 | 0 | 1.41 | On |
+| 1000 | 0 | 2 | On |
+| 1600 | 0 | 2 | On |
+| 3000 | 0 | 1 | On |
+| 5000 | 0 | 1.5 | On |
+| 9000 | 0 | 2 | On |
+| 16000 | 0 | 1 | On |
+| 20000 | 0 | 1 | On |
+
+### Nordrassil
+
+Preamp: **+1.4 dB**.
+
+| Hz | Gain dB | Q | State |
+| ---: | ---: | ---: | --- |
+| 24 | 2.8 | 1.2 | On |
+| 30 | 4.5 | 1.3 | On |
+| 50 | 2.8 | 2.5 | On |
+| 90 | 6 | 1.8 | On |
+| 160 | 5.7 | 1.6 | On |
+| 300 | 4 | 1.3 | On |
+| 500 | 0 | 1.8 | On |
+| 1000 | 4.8 | 1.2 | On |
+| 1600 | 4.6 | 1.6 | On |
+| 3000 | -4.3 | 1.3 | On |
+| 5000 | 2.8 | 1.5 | On |
+| 9000 | 6 | 1.7 | On |
+| 16000 | -4 | 1.2 | Off |
+| 20000 | -5 | 1.2 | On |
+
+### Marble Alibi
+
+Preamp: **+0 dB**.
+
+| Hz | Gain dB | Q | State |
+| ---: | ---: | ---: | --- |
+| 10 | 0 | 0.71 | On |
+| 30 | 7 | 2.8 | On |
+| 50 | 1 | 2.5 | On |
+| 90 | 7.4 | 2.4 | On |
+| 160 | 4.8 | 2.3 | On |
+| 300 | 2.2 | 1.7 | On |
+| 500 | -2.8 | 2.1 | On |
+| 1000 | 5.8 | 1.8 | On |
+| 1600 | 6.5 | 2.2 | On |
+| 3000 | -5.5 | 1.8 | On |
+| 5000 | 4 | 2 | On |
+| 9000 | 5.8 | 2 | On |
+| 16000 | -4 | 1.5 | On |
+| 20000 | -5 | 1.5 | On |
+
+### Red Herring
+
+Preamp: **+0 dB**.
+
+| Hz | Gain dB | Q | State |
+| ---: | ---: | ---: | --- |
+| 20 | 6 | 1.05 | On |
+| 30 | 10 | 2.8 | On |
+| 50 | 0 | 2.5 | On |
+| 90 | 9 | 3.2 | On |
+| 160 | 4.8 | 2.2 | On |
+| 300 | 1.3 | 1.8 | On |
+| 500 | -4 | 1.9 | On |
+| 1000 | 3.2 | 1.8 | On |
+| 1600 | 4 | 2 | On |
+| 3000 | -4.8 | 1.6 | On |
+| 5000 | 1 | 2 | On |
+| 9000 | 6.8 | 2.6 | On |
+| 16000 | -4.5 | 1.5 | On |
+| 20000 | -5.5 | 1.5 | On |
+
+### Silent Anvil
+
+Preamp: **+0 dB**.
+
+| Hz | Gain dB | Q | State |
+| ---: | ---: | ---: | --- |
+| 10 | 8.9 | 2.5 | On |
+| 30 | 9.1 | 3.75 | On |
+| 50 | 4 | 2.5 | On |
+| 90 | 8.2 | 3 | On |
+| 160 | 7.1 | 2 | On |
+| 300 | 6 | 1.41 | On |
+| 500 | 2.2 | 1.41 | On |
+| 1000 | 5.1 | 2 | On |
+| 1600 | 5.8 | 2 | On |
+| 3000 | -3.3 | 1 | On |
+| 5000 | 3.3 | 1.5 | On |
+| 9000 | 6 | 2 | On |
+| 16000 | -3.8 | 1 | On |
+| 20000 | -5.1 | 1 | On |
 
 ## Validation
 
-Regression tests check stable poles, finite response and native APO export/import
-of magnitude and phase at 44.1, 48, 88.2, 96, 176.4 and 192 kHz. They check bass,
-90-versus-50 Hz emphasis, the midrange dips and 9 kHz lift. Regional comparisons
-ensure Red retains the deepest weight, Pocket the most 120–220 Hz body and Marble
-the strongest 900–1800 Hz presence. The sub-bass regression also verifies that the added response stays below
-0.04 dB above 300 Hz, below 1.3 dB at 50 Hz and below 0.35 dB at 90 Hz.
-Those are response checks, not runtime gain caps.
-
-Nordrassil's reference test checks every frequency, gain, Q and enabled flag
-against the approved settings. At all six sample rates, it verifies stability and
-that the disabled 16 kHz band contributes neither gain nor phase. Native APO
-export/import retains that band as OFF with its original values. The factory
-order and all six native exports are tested.
-
-Packaged checks cover preset protection, preview/export, applying to temporary APO
-configuration, relocation and restart. No controlled listening panel or multi-device
-acoustic measurements were performed. Choose by listening on your actual equipment.
+Regression checks cover exact preservation of the approved Signature and Anvil
+curves, independent factory models, name migration without changing audio,
+all seven native exports/imports, disabled-band preservation and finite stable
+response at 44.1/48/88.2/96/176.4/192 kHz. Definition checks bound bass changes,
+verify lower-mid relief and articulation, and compare maximum frequency response.
+Those bounds are tests, not runtime gain caps. Packaged validation uses temporary
+APO configuration; it does not apply a preset to the live playback device.
