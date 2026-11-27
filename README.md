@@ -165,4 +165,4 @@ optional 0–10 ms delay. A delayed copy can cancel bass. All factory presets ke
 these effects off so their tonal balance also translates to mono. Factory curves,
 export parity and filter stability are covered by the embedded tests.
 
-![Bravado Desktop app UI 4](https://github.com/user-attachments/assets/0c1392e8-289b-48da-9939-10d2a428d1b3)
+![Bravado Desktop app UI 4](https://github.com/user-attachments/assets/572fc4ab-2078-4069-9fad-da53bd2bb438)
