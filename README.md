@@ -6,7 +6,7 @@ System-wide Windows EQ. Compact desktop panel. Local processing.
 
 <br>
 
-![Bravado Desktop app UI 5](https://github.com/user-attachments/assets/0c1392e8-289b-48da-9939-10d2a428d1b3)
+![Bravado Desktop app UI 5](https://github.com/user-attachments/assets/73c76eac-09dc-40ba-9441-931df1c78a6d)
 
 **Note**: Due to having encountered issues with other audio solutions such as Peace, in the shape of abrupt volume ramp-ups that threatened my speakers, let alone my eardrums, I developed an elegant solution with a few high-fidelity presets.
 
@@ -165,4 +165,4 @@ optional 0–10 ms delay. A delayed copy can cancel bass. All factory presets ke
 these effects off so their tonal balance also translates to mono. Factory curves,
 export parity and filter stability are covered by the embedded tests.
 
-![Bravado Desktop app UI 4](https://github.com/user-attachments/assets/5f27a299-b3d4-4da7-8dbe-e86ba6c34ab2)
+![Bravado Desktop app UI 4](https://github.com/user-attachments/assets/0c1392e8-289b-48da-9939-10d2a428d1b3)
