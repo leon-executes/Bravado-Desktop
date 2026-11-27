@@ -49,7 +49,16 @@ if os.name == "nt" and getattr(sys, "frozen", False):
 # ============================================================================
 # 01 — Validated model. Factory presets and validated settings.
 # ============================================================================
-VERSION = "0.8.9"
+VERSION = "0.9.12"
+DEFAULT_MAX_LIFT = 5.0
+SPECTRAL_DLL = "BravadoSpectral.dll"
+SPECTRAL_SHA256 = "8053fbbf608313f5b0bfa4a2d381f54dfd7962f4679153f29dcb127bca580a21"
+CREVASSE_DLL = "BravadoCrevasse.dll"
+PROCESSOR_HASHES = {SPECTRAL_DLL: SPECTRAL_SHA256, CREVASSE_DLL:
+                    "36808dfe6d9a48ce790251c887e713d3e3c67861b620842168039e76a2b99256"}
+# Normalized Root parameter. Keep the original root and dip preset IDs.
+ROOT_STEPS = {"root": 0, "root12": .5, "root13": 1, "dip": 0,
+              "crevasse11": 0, "crevasse12": .5, "crevasse13": 1}
 SIGNATURE = "Bravado Signature Preset"
 ANVIL = "Silent Anvil"
 DOUBLE_DB = 20 * math.log10(2)
@@ -61,7 +70,7 @@ QUALITIES = [2.5, 3.75, 2.5, 3, 2, 1.41, 1.41, 2, 2, 1, 1.5, 2, 1, 1]
 # Original, assertive alternatives built around Signature's tonal scale.
 # Explicit filter gains and Q; no automatic level adjustment. See PRESETS.md.
 VOICES = {
-    SIGNATURE: (1.4,
+    "Nordrassil": (1.4,
         (2.8, 4.5, 2.8, 6, 5.7, 4, 0, 4.8, 4.6, -4.3, 2.8, 6, -4, -5),
         (1.2, 1.3, 2.5, 1.8, 1.6, 1.3, 1.8, 1.2, 1.6, 1.3, 1.5, 1.7, 1.2, 1.2)),
     "Marble Alibi": (0,
@@ -75,7 +84,7 @@ VOICES = {
         (1.6, 2.2, 2.5, 2.3, 2.3, 1.8, 2.1, 2, 2, 1.6, 2, 3, 1.5, 1.5)),
 }
 # Reuse the otherwise neutral first band for distinct sub-bass support.
-VOICES["Nordrassil"] = VOICES[SIGNATURE]
+VOICES[SIGNATURE] = (3.1, *VOICES["Nordrassil"][1:])
 DEFINITION = ((420, -2.4, 1.2), (2100, .9, 2.2), (6000, 1.2, 2.0))
 SUB_BASS_CENTRES = {"Red Herring": 20, "Pocket Physics": 24, SIGNATURE: 24, "Nordrassil": 24}
 PRESET_ORDER = (SIGNATURE, "Pocket Physics", "Flat", "Nordrassil", "Marble Alibi", "Red Herring", ANVIL)
@@ -124,7 +133,7 @@ def defaults(name=SIGNATURE):
     """Fresh factory model; Signature includes the three definition filters."""
     model = {"schema": 1, "name": name, "preamp": 0.0,
              "processing": "native", "output": 0, "rumble": False, "bypass": False,
-             "double_track": False,
+             "profile": "off", "max_lift": DEFAULT_MAX_LIFT, "double_track": False,
              "room": False, "room_amount": 20, "separation": 0,
              "bass_track": False, "bass_delay": 0,
              "device": "all", "banks": {"all": bank(name == "Flat")}}
@@ -146,7 +155,9 @@ def defaults(name=SIGNATURE):
 
 def factory_presets():
     """Fresh models keep factory settings independent of preview edits."""
-    return {name: defaults(name) for name in PRESET_ORDER}
+    presets = {name: defaults(name) for name in PRESET_ORDER}
+    presets[SIGNATURE]["profile"] = "root"
+    return presets
 
 
 def current_preset_name(model):
@@ -156,7 +167,8 @@ def current_preset_name(model):
         # toggle names after the Signature/Nordrassil swap.
         for target in (SIGNATURE, "Nordrassil", ANVIL):
             reference = defaults(target)
-            if (model["preamp"] == reference["preamp"] and
+            factory_preamps = (reference["preamp"], 1.4) if target == SIGNATURE else (reference["preamp"],)
+            if (model["preamp"] in factory_preamps and
                     sorted(model["banks"]["all"]["bands"], key=lambda b: b["freq"]) ==
                     reference["banks"]["all"]["bands"]):
                 model = copy.deepcopy(model)
@@ -195,7 +207,11 @@ def validate(raw):
     device = raw.get("device", "all")
     if device != "all" and not re.fullmatch(r"\{[0-9A-Fa-f-]{36}\}", str(device)):
         raise ValueError("Select all devices or a playback endpoint GUID")
+    profile = raw.get("profile", "off")
+    if not isinstance(profile, str) or (profile != "off" and profile not in ROOT_STEPS):
+        raise ValueError("Unknown spectral profile")
     result = {"schema": 1, "name": name.strip(), "device": device,
+              "profile": profile, "max_lift": number(raw.get("max_lift", DEFAULT_MAX_LIFT), 0, 72, "Max lift"),
               "preamp": number(raw.get("preamp"), -60, 30, "Preamp"),
               "processing": "native",  # Legacy guarded presets migrate without hidden attenuation.
               "output": number(raw.get("output"), -60, 0, "Output attenuation"),
@@ -502,7 +518,72 @@ def boost_notice(model):
             f"{label} {peak:+.1f} dBFS. ") + "Estimated response, not a live measurement."
 
 
-def native_bundle(model):
+def spectral_active(model):
+    return model["profile"] != "off" and model["max_lift"] > 0 and not model["bypass"]
+
+
+def crevasse_input():
+    """Preserve original channels and keep all-channel EQ off the reference bus."""
+    lines = ['Eval: BravadoWet = "all"']
+    for count in range(1, 33):
+        channels = range(1, count + 1)
+        wet = " ".join(map(str, channels))
+        copies = " ".join(f"BRVDRY{i}={i}" for i in channels)
+        # APO enumerates selected channels in creation order. Reserve the
+        # wet padding channel before the dry copies for the last odd pair.
+        lines.extend([f'{"If" if count == 1 else "ElseIf"}: outputChannelCount == {count}',
+                      f'  Eval: BravadoWet = "{wet}"', f"  Copy: BRVPAD=0 {copies}"])
+    return lines + ["EndIf:"]
+
+
+def crevasse_output(command):
+    lines = ["If: outputChannelCount <= 32"]
+    for left in range(1, 33, 2):
+        right = left + 1
+        lines.extend([f"If: outputChannelCount >= {left}",
+                      f"  If: outputChannelCount == {left}",
+                      f"    Copy: BRVPAD={left} BRVEND=BRVDRY{left}",
+                      f"    Channel: {left} BRVPAD BRVDRY{left} BRVEND",
+                      "  Else:",
+                      f"    Channel: {left} {right} BRVDRY{left} BRVDRY{right}",
+                      "  EndIf:", f"  {command}", "EndIf:"])
+    return lines + ["EndIf:", "Channel: `BravadoWet`"]
+
+
+def append_spectral(files, lines, model, asset_dir):
+    if not spectral_active(model):
+        return
+    profile = model["profile"]
+    weighted = profile.startswith("crevasse")
+    dll = CREVASSE_DLL if weighted else SPECTRAL_DLL
+    path = Path(__file__).resolve().parent / "dsp" / dll
+    binary = path.read_bytes()
+    if digest(binary) != PROCESSOR_HASHES[dll]:
+        raise ValueError("Spectral processor failed verification. Extract a fresh Bravado release.")
+    files[dll] = binary
+    library = asset_dir.resolve() / dll if asset_dir else dll
+    if asset_dir is None:
+        files["INSTALL-PROFILE.txt"] = (
+            f"Copy {dll} into Equalizer APO's VSTPlugins folder. "
+            "Keep filters.txt and any WAV files together and include filters.txt in config.txt.\n"
+        ).encode()
+    command = f'VSTPlugin: Library "{library}" Profile {int(profile == "dip")} Lift {model["max_lift"]/72:.9g}'
+    if ROOT_STEPS[profile]:
+        command += f' Root {ROOT_STEPS[profile]:g}'
+    if weighted:
+        # All existing speaker-bank, room and bass selections must stay on wet channels.
+        lines[:] = [("Channel: `BravadoWet`" if line.strip().lower() == "channel: all" else line)
+                    for line in lines]
+        start = next(i for i, line in enumerate(lines) if line.startswith("Device:")) + 1
+        lines[start:start] = crevasse_input()
+        lines.extend(crevasse_output(command))
+    else:
+        lines.extend(["Channel: all", command])
+    if model["output"]:
+        lines.append(f'Preamp: {model["output"]:.12g} dB')
+
+
+def native_bundle(model, asset_dir=None):
     """Native APO IIRs, with imported preamps at their original chain positions."""
     files = {}
     lines = [MARKER, "# Native APO filters; no hidden attenuation or gain recovery.",
@@ -526,7 +607,7 @@ def native_bundle(model):
             kind = {"LS": "LSC", "HS": "HSC", "HP": "HPQ", "LP": "LPQ"}.get(band["kind"], band["kind"])
             gain = f' Gain {band["gain"]:.12g} dB' if band["kind"] in ("PK", "LS", "HS") else ""
             lines.append(f'Filter {i+1}: {"ON" if band["enabled"] else "OFF"} {kind} Fc {band["freq"]:.12g} Hz{gain} Q {band["q"]:.12g}')
-        trim = b["trim"] + (model["output"] if key == "all" else 0)
+        trim = b["trim"] + (model["output"] if key == "all" and not spectral_active(model) else 0)
         if trim:
             lines.append(f"Preamp: {trim:.12g} dB")
         if key == "all" and model["double_track"]:
@@ -542,9 +623,12 @@ def native_bundle(model):
     report = {"48000": {key: native_stats(model, key) for key in model["banks"]}}
     if model["double_track"] or ((model["bass_track"] or model["separation"]) and not model["bypass"]):
         report["48000"]["all"]["boost_notice"] = boost_notice(model)
+    if spectral_active(model):
+        report["48000"]["all"]["boost_notice"] = "Spectral profile active. Final peak depends on the signal."
     files.update({"preset.json": json_bytes(model), "report.json": json_bytes(report)})
     append_room(files, lines, model)
     append_separation(lines, model)
+    append_spectral(files, lines, model, asset_dir)
     files["filters.txt"] = ("\n".join(lines)+"\n").encode()
     return files, report
 
@@ -560,10 +644,10 @@ def native_stats(model, key):
             "rate": 48000, "requested_db": applied, "scope": "Selected bank before Room and Separation"}
 
 
-def compile_bundle(raw, hold=None):
+def compile_bundle(raw, hold=None, *, asset_dir=None):
     # hold is retained only for callers from earlier versions. No ceiling,
     # normalization or previous gain state influences native compilation.
-    return native_bundle(validate(raw))
+    return native_bundle(validate(raw), asset_dir)
 
 
 def preview(raw, key, hold=None):
@@ -652,6 +736,8 @@ def import_preset(text):
                 continue
             if line.lower() in ("channel: all", "device: all"):
                 continue
+            if line.lower().startswith("vstplugin:"):
+                raise ValueError("To import a Bravado dynamic profile, open preset.json from its APO bundle.")
             raise ValueError(f"Unsupported command (nothing imported): {line[:90]}")
         if not rows:
             raise ValueError("No supported filters found")
@@ -850,6 +936,14 @@ class Engine:
     def current_preset(self):
         if not self.apo:
             raise ValueError("Equalizer APO configuration was not found")
+        with self.lock:
+            if self.state.get("enabled") and self.state.get("owned"):
+                assets = self.state.get("files", {})
+                if any(Path(rel).name in PROCESSOR_HASHES for rel in assets) and self.verify():
+                    rel = next(rel for rel in assets if Path(rel).name == "preset.json")
+                    model = validate(json.loads((self.apo/rel).read_bytes()))
+                    model["name"] = "Current APO configuration"
+                    return {"model": model, "warnings": []}
         total = 0
         def read(path, stack=()):
             nonlocal total
@@ -954,11 +1048,11 @@ class Engine:
             before = self.root_bytes()
             if self.state["owned"] and not force:
                 self.verify()
-            files, report = compile_bundle(model)
             if self.trip.is_set():
                 raise ValueError("Apply cancelled by emergency mute")
             generation = "bravado-" + uuid.uuid4().hex
             folder = self.apo/generation
+            files, report = compile_bundle(model, asset_dir=folder)
             folder.mkdir()
             for name, data in files.items():
                 atomic_write(folder/name, data)
@@ -979,7 +1073,25 @@ class Engine:
                 self.trip.set()
                 self.state.update(fault="Switch/save failed. Inspect configuration before recovery.")
                 raise
-            return {"message": "Equalizer enabled. " + report.get("48000", {}).get("all", {}).get("boost_notice", "Endpoint APO setup is required for audible processing."), "report": report}
+            profile = model["profile"]
+            if model["bypass"]:
+                message = "EQ bypass applied. Dynamic processing is bypassed."
+            elif profile == "off":
+                message = "EQ applied. Dynamic profile off."
+            else:
+                if profile == "dip":
+                    label = "Flashpoint Peaks"
+                else:
+                    family = "Crevasse" if profile.startswith("crevasse") else "Aperture"
+                    label = f"{family} X-intercept {1.1 + .2 * ROOT_STEPS[profile]:.1f}"
+                message = f'{label} applied. Max lift {model["max_lift"]:g} dB.'
+                if model["max_lift"] == 0:
+                    message += " Dynamic processing is inactive."
+            if not spectral_active(model):
+                notice = report["48000"]["all"].get("boost_notice")
+                if notice:
+                    message += " " + notice
+            return {"message": message, "report": report}
 
     def disable(self):
         with self.lock:
@@ -1407,32 +1519,82 @@ HTML = r'''<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Bravado · Precision equalizer</title>
 <style>
-:root{color-scheme:dark;--bg:#101316;--panel:#191e23;--line:#303941;--ink:#ecf0ef;--muted:#9da9af;--accent:#b6ee81;--cyan:#7fd5dd;--danger:#ff9589}
+:root{--panel-gap:9px;color-scheme:dark;--bg:#101316;--panel:#191e23;--line:#303941;--ink:#ecf0ef;--muted:#9da9af;--accent:#b6ee81;--cyan:#7fd5dd;--danger:#ff9589}
 *{box-sizing:border-box}html,body{height:100%;overflow:hidden}body{margin:0;background:var(--bg);color:var(--ink);font:12px/1.4 'Segoe UI',sans-serif;display:flex;flex-direction:column}
 button,input,select{font:inherit}button,select,input[type=number],input[type=text]{background:#242c32;border:1px solid #3a454e;border-radius:5px;color:var(--ink);padding:5px 8px}button{cursor:pointer;white-space:nowrap}button:hover{background:#354149;border-color:#7c8e98}button:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}button:disabled{opacity:.4;cursor:wait}button.primary{background:var(--accent);border-color:var(--accent);color:#15220b;font-weight:600}button.danger{border-color:#79524b;color:var(--danger)}button[aria-pressed=true]{background:#303e2b;border-color:#718e5c;color:var(--accent)}button.small{padding:4px 7px;font-size:11px}input[type=checkbox],input[type=range]{accent-color:var(--accent)}input[type=number]{width:65px;font-variant-numeric:tabular-nums}select{max-width:100%}small,.muted{color:var(--muted)}
-header{padding:10px 14px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--line);gap:12px;flex:none}.brand{display:flex;align-items:center;gap:9px}.logo{width:30px;height:30px;border:1px solid var(--accent);border-radius:9px;display:flex;gap:3px;align-items:center;justify-content:center}.logo i{width:2px;background:var(--accent);border-radius:2px}.logo i:nth-child(1){height:10px}.logo i:nth-child(2){height:20px}.logo i:nth-child(3){height:15px}.logo i:nth-child(4){height:7px}h1{font-size:17px;letter-spacing:2.5px;margin:0;font-weight:600}h2{font-size:12px;font-weight:600;margin:0}.tag{display:none;font-size:9px;letter-spacing:1px;text-transform:uppercase}.badge{display:none}.actions{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
-.shell{width:100%;padding:10px 12px 8px;flex:1;min-height:0;display:flex;flex-direction:column}.topline{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:9px;flex:none}.title{font-size:16px;font-weight:600}.dirty{color:#c8b792;font-size:10px}.workspace{display:grid;grid-template-columns:minmax(0,1fr) 236px;gap:10px;min-height:0;flex:1}.workspace>*,.lower>*{min-width:0}.maincolumn{display:flex;flex-direction:column;min-height:0;gap:9px;overflow:auto;padding-right:1px}.panel{background:var(--panel);border:1px solid var(--line);border-radius:9px;min-width:0}.maincolumn>.panel{flex:none}.panelhead{padding:8px 10px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;gap:7px}.switchlabel{display:flex;align-items:center;gap:4px;font-size:11px}.preamp{padding:9px 10px;display:flex;align-items:center;gap:9px}.preamp input[type=range]{flex:1;min-width:40px}.preamp small{font-size:10px}.bandwrap{overflow-x:auto;padding:0 8px 6px}.bands{display:flex;min-width:0;gap:3px}.band{flex:1;min-width:41px;text-align:center;padding:5px 1px 2px;border-radius:5px;background:linear-gradient(#20283055,#171c2200)}.band input[type=number]{width:100%;text-align:center;padding:3px 0;border-color:transparent;background:#101519;font-size:10px;appearance:textfield}.band input::-webkit-inner-spin-button{appearance:none}.freq{color:var(--cyan);font-weight:600}.rail{height:100px;margin:6px 0;position:relative;display:flex;justify-content:center;background:repeating-linear-gradient(to top,transparent 0px,transparent 22px,#39424a 23px,transparent 24px);background-size:10px 100%;background-position:center;background-repeat:no-repeat}.rail:after{content:'';position:absolute;top:50%;width:100%;border-top:1px solid #56636a;pointer-events:none}.rail input{writing-mode:vertical-lr;direction:rtl;width:22px;height:100px;margin:0;z-index:1;cursor:ns-resize}.band .gain{color:var(--accent);font-weight:600;margin-bottom:2px}.band select{font-size:10px;width:100%;padding:3px 0;margin-top:3px}.bandlabel{font-size:9px;color:var(--muted);margin:3px 0 1px}.band .enable{height:13px;margin:5px 0 0}.band.disabled{opacity:.45}.scale{min-width:22px;position:relative;color:#82929b;font-size:9px}.scale span{position:absolute;left:0}.scale span:nth-child(1){top:35px}.scale span:nth-child(2){top:78px}.scale span:nth-child(3){top:122px}.tools{padding:0 8px 7px;display:flex;gap:4px;align-items:center;flex-wrap:wrap}.tools .muted{display:none}.tools button.small{font-size:10px;padding:3px 6px}
-.bottom{flex:none}.meterpanel{padding:8px 10px}.meter{height:6px;margin-top:6px;background:#0a0e11;border-radius:6px;overflow:hidden}.meter>div{height:100%;width:0;background:linear-gradient(90deg,#79bc77,#c2ed83,#ead473,#ec887a);transition:width .12s}.statrow{display:flex;justify-content:space-between;gap:10px;font-size:10px}.meterpanel>.note{display:none}.lower{display:grid;grid-template-columns:192px minmax(0,1fr);gap:9px;flex:1;min-height:180px}.presetlist{padding:2px;flex:1;min-height:0;overflow:auto}.lower>.panel{min-height:0}.lower>.panel:first-child{display:flex;flex-direction:column;overflow:hidden}.lower .panelhead,.librarytools,.exchange{flex:none}.lower>.panel:first-child:has(.exchange[open]){display:block;overflow:auto}.presetlist button{width:100%;text-align:left;border-color:transparent;background:transparent;border-radius:4px;padding:2px 6px;line-height:12px;font-size:10px;overflow:hidden;text-overflow:ellipsis}.presetlist button.selected{background:#303e2b;border-color:#587348;color:var(--accent)}.lower>.panel:first-child .panelhead{padding:5px 10px}.librarytools{border-top:1px solid var(--line);padding:4px 6px;display:flex;gap:4px;flex-wrap:wrap}.exchange{border-top:1px solid var(--line);padding:4px 6px}.exchange h2{font-size:10px;margin-bottom:5px}.exchange .actions{gap:4px}.exchange button{font-size:10px}.graphbody{padding:5px 9px 8px}canvas{width:100%;height:120px;display:block}.legend{display:flex;gap:10px;font-size:9px;color:var(--muted);flex-wrap:wrap}.legend b{display:inline-block;width:12px;height:2px;vertical-align:middle;margin-right:4px;background:var(--cyan)}.legend .protected{background:var(--accent)}#graphStats{font-size:10px;text-align:right}
-.rightcolumn{display:flex;flex-direction:column;gap:9px;min-height:0;overflow:auto}.aside{padding:10px;flex:1}.aside section+section{border-top:1px solid var(--line);margin-top:10px;padding-top:10px}.aside h2{margin-bottom:7px}.aside select{width:100%;margin-bottom:5px;font-size:11px}.field{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:6px;font-size:11px}.field input[type=number]{width:58px;padding:3px 6px}.note{font-size:10px;color:var(--muted);margin:6px 0 0;line-height:1.5}.control-help{font-size:10px;color:var(--muted);margin-top:5px}.control-help summary{cursor:pointer}.control-help[open] summary{color:var(--cyan)}.separation-control{margin:8px 0}.separation-control .field{margin:0}.separation-control output{font-variant-numeric:tabular-nums;color:var(--accent)}.separation-control input{width:100%;margin:5px 0 0;display:block;cursor:ew-resize}.separation-scale{display:flex;justify-content:space-between;font-size:9px;color:var(--muted)}#doubleNote{display:none}.status{padding:9px 10px;font-size:11px;color:var(--muted);flex:none}#statusTitle{color:var(--ink);font-weight:600;display:inline}#statusText{font-size:10px;line-height:1.4;margin-top:3px}.status .actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px}.status button{font-size:10px;white-space:normal;text-align:left;padding:4px 6px}.status #quitBtn{grid-column:1/-1}.statusgood{color:var(--accent)!important}.footer{display:flex;justify-content:space-between;gap:10px;margin-top:7px;color:#839098;font-size:9px;flex:none}
-.message{position:fixed;left:14px;bottom:26px;max-width:min(680px,calc(100vw - 28px));padding:10px 14px;border-radius:7px;border:1px solid #466075;background:#1b2933;white-space:pre-wrap;font-size:12px;box-shadow:0 5px 25px #0007;z-index:10;cursor:pointer}.message.error{border-color:#995c54;background:#322320;color:#ffd0c8}.message:empty,.hidden{display:none!important}dialog{background:var(--panel);border:1px solid #536069;border-radius:10px;color:var(--ink);width:min(580px,90vw);max-height:85vh;overflow:auto;padding:20px}dialog::backdrop{background:#0009}dialog h2{font-size:18px;margin-bottom:12px}dialog p{color:var(--muted);line-height:1.6}dialog .actions{margin-top:16px;justify-content:flex-end}dialog input[type=text]{width:100%}.dangerbox{background:#322623;border:1px solid #7b5146;padding:10px;border-radius:6px;color:#f5bdac!important}kbd{border:1px solid #4a575f;border-radius:4px;padding:1px 4px}*{scrollbar-width:thin;scrollbar-color:#526168 #171c21}
+header{padding:10px 14px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--line);gap:12px;flex:none}.brand{display:flex;align-items:center;gap:9px}.logo{width:30px;height:30px;border:1px solid var(--accent);border-radius:9px;display:flex;gap:3px;align-items:center;justify-content:center}.logo i{width:2px;background:var(--accent);border-radius:2px}.logo i:nth-child(1){height:10px}.logo i:nth-child(2){height:20px}.logo i:nth-child(3){height:15px}.logo i:nth-child(4){height:7px}h1{font-size:17px;letter-spacing:2.5px;margin:0;font-weight:600}h2{font-size:12px;font-weight:600;margin:0}.brand-version{color:#869097;font-size:11px;font-weight:400;letter-spacing:0;font-variant-numeric:tabular-nums;vertical-align:middle}.tag{display:none;font-size:9px;letter-spacing:1px;text-transform:uppercase}.badge{display:none}.actions{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.shell{width:100%;padding:10px 12px 8px;flex:1;min-height:0;display:flex;flex-direction:column}.topline{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:9px;flex:none}.title{font-size:16px;font-weight:600}.dirty{color:#c8b792;font-size:10px}.workspace{display:grid;grid-template-columns:minmax(0,1fr) 236px;gap:var(--panel-gap);min-height:0;flex:1}.workspace>*,.lower>*{min-width:0}.maincolumn{display:flex;flex-direction:column;min-height:0;gap:var(--panel-gap);overflow:auto}.panel{background:var(--panel);border:1px solid var(--line);border-radius:9px;min-width:0}.maincolumn>.panel{flex:none}.panelhead{padding:8px 10px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;gap:7px}.switchlabel{display:flex;align-items:center;gap:4px;font-size:11px}.preamp{padding:9px 10px;display:flex;align-items:center;gap:9px}.preamp input[type=range]{flex:1;min-width:40px}.preamp small{font-size:10px}.bandwrap{overflow-x:auto;padding:0 8px 6px}.bands{display:flex;min-width:0;gap:3px}.band{flex:1;min-width:41px;text-align:center;padding:5px 1px 2px;border-radius:5px;background:linear-gradient(#20283055,#171c2200)}.band input[type=number]{width:100%;text-align:center;padding:3px 0;border-color:transparent;background:#101519;font-size:10px;appearance:textfield}.band input::-webkit-inner-spin-button{appearance:none}.freq{color:var(--cyan);font-weight:600}.rail{height:100px;margin:6px 0;position:relative;display:flex;justify-content:center;background:repeating-linear-gradient(to top,transparent 0px,transparent 22px,#39424a 23px,transparent 24px);background-size:10px 100%;background-position:center;background-repeat:no-repeat}.rail:after{content:'';position:absolute;top:50%;width:100%;border-top:1px solid #56636a;pointer-events:none}.rail input{writing-mode:vertical-lr;direction:rtl;width:22px;height:100px;margin:0;z-index:1;cursor:ns-resize}.band .gain{color:var(--accent);font-weight:600;margin-bottom:2px}.band select{font-size:10px;width:100%;padding:3px 0;margin-top:3px}.bandlabel{font-size:9px;color:var(--muted);margin:3px 0 1px}.band .enable{height:13px;margin:5px 0 0}.band.disabled{opacity:.45}.scale{min-width:22px;position:relative;color:#82929b;font-size:9px}.scale span{position:absolute;left:0}.scale span:nth-child(1){top:35px}.scale span:nth-child(2){top:78px}.scale span:nth-child(3){top:122px}.tools{padding:0 8px 7px;display:flex;gap:4px;align-items:center;flex-wrap:wrap}.tools .muted{display:none}.tools button.small{font-size:10px;padding:3px 6px}
+.bottom{flex:none}.meterpanel{display:grid;grid-template-columns:auto minmax(0,1fr) 13ch;align-items:center;gap:9px;padding:5px 10px;font-size:10px;white-space:nowrap}.meter{height:6px;background:#0a0e11;border-radius:6px;overflow:hidden}.meter>div{height:100%;width:0;background:linear-gradient(90deg,#79bc77,#c2ed83,#ead473,#ec887a);transition:width .12s}#peakLabel{text-align:right;font-variant-numeric:tabular-nums}.meterpanel>.note{display:none}.lower{display:grid;grid-template-columns:192px minmax(0,1fr);gap:var(--panel-gap);flex:1;min-height:180px}.presetlist{padding:2px;flex:1;min-height:0;overflow:auto}.lower>.panel{min-height:0}.lower .panelhead,.librarytools,.exchange{flex:none}.lower>.panel:first-child .panelhead{padding:5px 10px}.librarytools{border-top:1px solid var(--line);padding:4px 6px;display:flex;gap:4px;flex-wrap:wrap}.exchange{border-top:1px solid var(--line);padding:4px 6px}.exchange h2{font-size:10px;margin-bottom:5px}.exchange .actions{gap:4px}.exchange button{font-size:10px}.graphbody{padding:5px 9px 8px}canvas{width:100%;height:120px;display:block}.legend{display:flex;gap:10px;font-size:9px;color:var(--muted);flex-wrap:wrap}.legend b{display:inline-block;width:12px;height:2px;vertical-align:middle;margin-right:4px;background:var(--cyan)}.legend .protected{background:var(--accent)}#graphStats{font-size:10px;text-align:right}
+.rightcolumn{display:flex;flex-direction:column;gap:var(--panel-gap);min-height:0;overflow:auto}.aside{padding:10px;flex:1}.aside section+section{border-top:1px solid var(--line);margin-top:var(--panel-gap);padding-top:7px}.aside h2{margin-bottom:7px}.aside select{width:100%;margin-bottom:5px;font-size:11px}.field{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:6px;font-size:11px}.field input[type=number]{width:58px;padding:3px 6px}.note{font-size:10px;color:var(--muted);margin:6px 0 0;line-height:1.5}.control-help{font-size:10px;color:var(--muted);margin-top:5px}.control-help summary{cursor:pointer}.control-help[open] summary{color:var(--cyan)}.separation-control{margin:8px 0}.separation-control .field{margin:0}.separation-control output{font-variant-numeric:tabular-nums;color:var(--accent)}.separation-control input{width:100%;margin:5px 0 0;display:block;cursor:ew-resize}.separation-scale{display:flex;justify-content:space-between;font-size:9px;color:var(--muted)}#doubleNote{display:none}.status{padding:9px 10px;font-size:11px;color:var(--muted);flex:none}#statusTitle{color:var(--ink);font-weight:600;display:inline}#statusText{font-size:10px;line-height:1.4;margin-top:3px}.status .actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px}.status button{font-size:10px;white-space:normal;text-align:left;padding:4px 6px}.status #quitBtn{grid-column:1/-1}.statusgood{color:var(--accent)!important}.footer{display:flex;justify-content:space-between;gap:10px;margin-top:7px;color:#839098;font-size:9px;flex:none}
+.message{position:fixed;left:14px;bottom:26px;max-width:min(680px,calc(100vw - 28px));padding:10px 14px;border-radius:7px;border:1px solid #466075;background:#1b2933;white-space:pre-wrap;font-size:12px;box-shadow:0 5px 25px #0007;z-index:10;cursor:pointer}.message:not(.error){pointer-events:none}.message.error{border-color:#995c54;background:#322320;color:#ffd0c8}.message:empty,.hidden{display:none!important}dialog{background:var(--panel);border:1px solid #536069;border-radius:10px;color:var(--ink);width:min(580px,90vw);max-height:85vh;overflow:auto;padding:20px}dialog::backdrop{background:#0009}dialog h2{font-size:18px;margin-bottom:12px}dialog p{color:var(--muted);line-height:1.6}dialog .actions{margin-top:16px;justify-content:flex-end}dialog input[type=text]{width:100%}.dangerbox{background:#322623;border:1px solid #7b5146;padding:10px;border-radius:6px;color:#f5bdac!important}kbd{border:1px solid #4a575f;border-radius:4px;padding:1px 4px}*{scrollbar-width:thin;scrollbar-color:#526168 #171c21}
 @media(max-width:950px){.workspace{grid-template-columns:minmax(0,1fr) 218px}.band{min-width:36px}.lower{grid-template-columns:174px minmax(0,1fr)}.rail,.rail input{height:100px}.scale span:nth-child(2){top:78px}.scale span:nth-child(3){top:122px}.preamp small{display:none}}
-@media(max-width:760px){html,body{overflow:auto;height:auto;min-height:100%}.shell{display:block}.workspace{display:flex;flex-direction:column}.maincolumn,.rightcolumn{overflow:visible}.lower{min-height:0}.bands{min-width:620px}.rightcolumn{margin-top:10px}.topline{align-items:flex-start}.topline .actions{justify-content:flex-end}.title{font-size:14px}.tag{display:none}header{padding:8px 12px}.footer{margin-bottom:6px}}
+[hidden]{display:none!important}
+:root{--sidebar:236px}@media(max-width:950px){:root{--sidebar:218px}}.workspace{flex:1;align-items:stretch;grid-template-columns:minmax(0,1fr) var(--sidebar)}.maincolumn,.rightcolumn,.bandwrap{overflow:visible}
+.maincolumn>.panel{flex:1;display:flex;flex-direction:column}
+
+.bandwrap{flex:1;display:flex}.bands{flex:1}.band{display:flex;flex-direction:column;align-items:center}
+.band .rail{flex:1;min-height:60px;width:100%}.rail input{position:absolute;inset:0;margin:auto;height:100%}
+.bandlabel{line-height:13px}.scale{display:grid;grid-template-rows:30px minmax(60px,1fr) 108px;align-self:stretch}
+.scale span:nth-child(n){grid-area:2 / 1;position:static;align-self:start}.scale span:nth-child(2){align-self:center}.scale span:nth-child(3){align-self:end}.lower{flex:none;height:285px;margin-top:var(--panel-gap);padding:var(--panel-gap);border:1px solid #414c55;border-radius:9px;background:#20272d;grid-template-rows:minmax(0,1fr) auto;grid-template-columns:var(--sidebar) minmax(0,1fr) var(--sidebar)}
+.lower>.footer{grid-column:1/-1;margin:0;gap:10px;align-items:center}
+.footer .status{padding:0;display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:3px 9px}
+.footer #statusText,.footer .control-help{margin:0}.footer .control-help{font-size:10px}
+.compact .footer{flex-wrap:wrap}.compact .footer .status{justify-content:flex-start}
+.lower .panelhead{padding:5px 10px;min-height:28px}.lower>.panel:first-child{overflow:visible}
+/* Each library uses the same four rows: heading, choices, controls and options. */
+.library-panel{display:grid;grid-template-rows:28px minmax(0,1fr) 42px 26px}
+.presetlist{position:relative}
+.library-panel :is(.presetlist,.profilelist){display:flex;flex-direction:column;align-items:stretch;overflow-y:scroll;overflow-x:hidden;overscroll-behavior:contain;scrollbar-gutter:stable;min-width:0;min-height:0;margin:0;border:0;padding:2px}
+.profilelist label{flex:none;position:relative;cursor:pointer}
+.profilelist input{position:absolute;opacity:0;width:1px;height:1px}
+.library-panel :is(.presetlist button,.profilelist label span){width:100%;display:block;height:18px;flex:none;text-align:left;box-sizing:border-box;padding:2px 6px;font:10px/12px 'Segoe UI',sans-serif;border:1px solid transparent;border-radius:4px;background:transparent;overflow:hidden;text-overflow:ellipsis}
+.library-panel :is(.presetlist button.selected,.profilelist input:checked+span){background:#303e2b;border-color:#587348;color:var(--accent)}
+.library-panel :is(.presetlist button:hover,.profilelist label:hover span){border-color:#64735f}
+.profilelist input:focus-visible+span{outline:2px solid var(--cyan);outline-offset:-2px}.profilelist:disabled{opacity:.55}
+.library-panel :is(.librarytools,.profileSettings,.exchange,.library-options){padding:3px 6px;margin:0;border-top:1px solid var(--line);align-content:center}
+.librarytools,.library-options{display:flex;align-items:center;gap:5px}
+.profileSettings{display:grid;grid-template-columns:minmax(0,.92fr) minmax(0,1.08fr);gap:8px}
+.profileSettings .field{display:grid;grid-template-columns:auto minmax(0,1fr);align-items:center;gap:2px;margin:0}
+.profileSettings label{font-size:10px;line-height:12px;white-space:nowrap}.profileSettings input[type=number]{width:100%;min-width:0;padding:3px;font-size:11px}
+.library-options{justify-content:space-between;font-size:10px;color:var(--muted)}.library-options label{display:flex;align-items:center;gap:4px}
+.library-options input,.library-options details{margin:0}
+.pager{display:inline-flex;gap:3px}.pager button{padding:0 4px;min-width:20px;height:18px;line-height:14px}.pager button:disabled{cursor:default}
+.response .graphbody{display:flex;flex-direction:column;height:calc(100% - 29px)}.graphbody canvas{flex:1;min-height:0}
+#detailBody>.field,#detailBody>select{margin:8px 0}#detailBody>.actions{justify-content:flex-start}#detailTitle{margin-bottom:8px}
+.topline>div:first-child{min-width:0}.title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}#view{display:none}.compact #view{display:block;align-self:flex-start;margin:0 0 7px}
+.compact .workspace,.compact .lower{display:contents}.compact .lower{padding:0;border:0}.compact .lower>.footer{margin-top:auto}.compact .maincolumn,.compact .rightcolumn,.compact .lower>.panel{display:none}
+.compact[data-view=eq] .maincolumn,.compact[data-view=output] .rightcolumn{display:flex}
+.compact[data-view=response] .response{display:flex;flex-direction:column}.compact[data-view=library] .lower>.library-panel:first-child,.compact[data-view=dynamics] .dynamics{display:grid}
+.compact .maincolumn>.panel{flex:none}.compact .band .rail{height:80px;min-height:80px}.compact .maincolumn .bottom{margin:0}.compact .aside{flex:0}.compact .lower>.panel{height:260px}
+.compact .footer{margin-top:auto}.compact .topline{flex-wrap:wrap}.compact .tag{display:none}
 </style></head><body>
-<header><div class="brand"><div class="logo" aria-hidden="true"><i></i><i></i><i></i><i></i></div><div><h1>BRAVADO</h1><div class="tag muted">Precision equalizer / Desktop · 0.8.9</div></div></div><div class="actions"><span class="badge" id="modeBadge">NATIVE APO</span><button id="helpBtn">Help</button><button class="danger" id="panicBtn" title="Mute Windows playback endpoints and latch protection">Mute <small>Esc</small></button></div></header>
+<header><div class="brand"><div class="logo" aria-hidden="true"><i></i><i></i><i></i><i></i></div><div><h1>BRAVADO <span class="brand-version">(v__BRAVADO_VERSION__)</span></h1><div class="tag muted">Precision equalizer / Desktop · __BRAVADO_VERSION__</div></div></div><div class="actions"><span class="badge" id="modeBadge">NATIVE APO</span><button id="helpBtn">Help</button><button class="danger" id="panicBtn" title="Mute Windows playback endpoints and latch protection">Mute <small>Esc</small></button></div></header>
 <main class="shell"><div id="message" class="message" role="status" aria-live="polite"></div>
 <div class="topline"><div><div class="tag muted">PRESET</div><div class="title" id="presetTitle">Bravado Signature Preset</div><span class="dirty" id="dirty">Ready to apply</span></div><div class="actions"><button id="connectBtn" class="primary">Enable</button><button id="disableBtn">Disable</button><button id="applyBtn">Apply changes</button></div></div>
-<div class="workspace"><div class="maincolumn"><div class="panel"><div class="panelhead"><h2>Parametric equalizer</h2><div class="actions"><span class="muted" id="bankLabel">All speakers</span><label class="switchlabel"><input type="checkbox" id="bypass">Bypass EQ</label></div></div>
+<select id="view" aria-label="Workspace panel"><option value="eq">Equalizer</option><option value="output">Output &amp; effects</option><option value="library">Preset library</option><option value="response">Frequency response</option><option value="dynamics">Dynamic preset library</option></select><div class="workspace"><div class="maincolumn"><div class="panel"><div class="panelhead"><h2>Parametric equalizer</h2><div class="actions"><span class="pager" id="bandsPager" hidden><button type="button" data-step="-1" aria-label="Previous bands">‹</button><button type="button" data-step="1" aria-label="Next bands">›</button></span><span class="muted" id="bankLabel">All speakers</span><label class="switchlabel"><input type="checkbox" id="bypass">Bypass EQ</label></div></div>
 <div class="preamp"><span>Preamp</span><input id="preamp" type="range" min="-60" max="30" step="0.1" value="0" aria-label="Requested preamp"><input id="preampN" type="number" min="-60" max="30" step="0.1" value="0" aria-label="Preamp in dB"><small>dB total <span id="stageNote"></span></small></div>
 <div class="bandwrap"><div class="bands" id="bands"></div></div><div class="tools"><button class="small" id="slot1">Set 1</button><button class="small" id="slot2">Set 2</button><button class="small" id="slot3">Set 3</button><button class="small" id="slot4">Set 4</button><button class="small" id="sortBtn" title="Arrange bands from low to high frequency">Sort bands</button><button class="small" id="flattenBtn">Flatten</button><button class="small" id="expandBtn">Expand ×1.1</button><button class="small" id="compressBtn">Compress ×0.9</button><button class="small" id="downBtn">−1 dB</button><button class="small" id="upBtn">+1 dB</button><button class="small" id="addBtn">+ Band</button><button class="small" id="removeBtn">− Last band</button><span class="muted" style="margin-left:auto;font-size:11px">Shift-click Set to store · double-click fader to reset</span></div></div>
 
-<div class="bottom"><section class="panel meterpanel"><div class="statrow"><span>Output peak</span><span id="peakLabel">—</span></div><div class="meter"><div id="meterFill"></div></div><p class="note">Read-only endpoint meter. Does not prove APO is installed on the device or measure acoustic loudness.</p></section></div>
-<div class="lower"><section class="panel"><div class="panelhead"><h2>Preset library</h2><small>Presets</small></div><div id="presets" class="presetlist"></div><div class="librarytools"><button class="small" id="saveBtn">Save as…</button><button class="small" id="deleteBtn">Delete</button></div><details class="exchange control-help"><summary>Import &amp; export</summary><div class="actions"><button class="small" id="currentBtn">Load current APO</button><button class="small" id="importBtn">Import</button><button class="small" id="jsonBtn">Save JSON</button><button class="small" id="exportBtn">APO bundle</button></div><details class="control-help"><summary>Details</summary><p class="note">Bravado JSON, legacy peak presets, or strict APO/AutoEQ parametric text. Files stay on this computer.</p></details><input type="file" class="hidden" id="fileInput" accept=".json,.peace,.txt"></details></section><section class="panel"><div class="panelhead"><h2>Frequency response</h2><small id="graphStats">Calculating response…</small></div><div class="graphbody"><canvas id="graph" aria-label="Frequency response graph at 48 kHz" role="img"></canvas><div class="legend"><span><b></b>EQ shape</span><span><b class="protected"></b>Output, selected bank</span><span>EQ response · 48 kHz</span></div></div></section></div>
+<div class="bottom"><section class="panel meterpanel"><span>Output peak</span><div class="meter" aria-hidden="true"><div id="meterFill"></div></div><span id="peakLabel">—</span><p class="note">Read-only endpoint meter. Does not prove APO is installed on the device or measure acoustic loudness.</p></section></div>
+
 </div><div class="rightcolumn"><aside class="panel aside"><section><h2>Output & speaker</h2><select id="device" aria-label="Playback device"><option value="all">All APO playback devices</option></select><select id="channel" aria-label="Speaker bank"><option value="all">All speakers</option><option value="L">Left</option><option value="R">Right</option><option value="C">Center</option><option value="LFE">Subwoofer</option><option value="RL">Left rear</option><option value="RR">Right rear</option><option value="SL">Left side</option><option value="SR">Right side</option></select><details class="control-help"><summary>Speaker adjustments</summary><div class="field"><label for="trim">Speaker trim · dB</label><input type="number" id="trim" min="-60" max="0" step="0.1"></div><div class="field"><label for="delay">Delay · ms</label><input type="number" id="delay" min="0" max="200" step="0.1"></div><div class="field"><label for="speakerMute">Mute this bank</label><input type="checkbox" id="speakerMute"></div><details class="control-help"><summary>Details</summary><p class="note">Individual speaker banks add correction after the All speakers curve. Processing follows the selected mode.</p></details></details></section>
-<section><h2>Space &amp; level</h2><div class="separation-control"><div class="field"><label for="separation">Separation</label><output id="separationValue" for="separation">Original · 0</output></div><input id="separation" type="range" min="-100" max="100" step="1" value="0" aria-label="Separation" aria-describedby="separationNote" title="Double-click to reset to Original"><div class="separation-scale" aria-hidden="true"><span>Mono</span><span>Original</span><span>Wide</span></div><details class="control-help"><summary>Details</summary><p class="note" id="separationNote">Left narrows to mono. Right tightens stereo bass, widens upper frequencies and adds gentle center presence. Front L/R only, after Room and speaker correction; muted banks stay muted. Double-click to reset. Apply to hear edits.</p></details></div><button id="roomBtn" aria-pressed="false" style="width:100%">Stereo Room · Off</button><div class="field"><label for="room_amount">Room amount · %</label><input id="room_amount" type="number" min="0" max="40" step="1" value="20"></div><details class="control-help"><summary>Details</summary><p class="note" id="roomNote">Short stereo ambience with an immediate dry sound. Adjust the amount to blend in reflections.</p></details><div class="field"><label for="double_track">Aligned double · +6.02 dB</label><input type="checkbox" id="double_track"></div><div class="field"><label for="bass_track">Bass double · below 120 Hz</label><input type="checkbox" id="bass_track"></div><div class="field"><label for="bass_delay">Bass sync delay · ms</label><input id="bass_delay" type="number" min="0" max="10" step="0.01" value="0"></div><details class="control-help"><summary>Details</summary><p class="note" id="bassNote">Original sound plus a 120 Hz low-pass copy. Zero added delay by default; small delays change phase and can cancel bass.</p></details><p class="note" id="doubleNote" role="status">Aligned double: +6.02 dB across all frequencies. Bass double: an extra low-pass copy. Apply to hear changes.</p></section><section><h2>Gain controls</h2><div class="field"><label for="output">Output trim · dB</label><input id="output" type="number" min="-60" max="0" step="0.1" value="-6"></div><div class="field"><label for="rumble">25 Hz rumble filter</label><input type="checkbox" id="rumble"></div><details class="control-help"><summary>Details</summary><p class="note"><span id="modeNote">Reduce preamp or output trim if you hear distortion.</span></p></details><button class="small hidden" id="ackBtn" style="margin-top:10px">Acknowledge safety latch</button></section>
-</aside><section class="panel status"><div id="statusTitle">Preview mode</div><div id="statusText">Bravado EQ has not been enabled.</div><details class="control-help"><summary>Connection tools</summary><div class="actions" style="margin-top:7px"><button class="small" id="restoreBtn" title="Restore previous APO config…">Restore config…</button><button class="small" id="refreshBtn">Refresh devices</button><button class="small" id="adminEnableBtn" title="Enable as administrator">Admin enable</button><button class="small" id="adminDisableBtn" title="Disable as administrator">Admin disable</button><button class="small" id="deviceSetupBtn" title="Configure output device…">Device setup…</button><button class="small" id="testBtn" title="Quiet 440 Hz test">440 Hz test</button><button class="small" id="quitBtn">Close Bravado</button></div></details></section></div></div><div class="footer"><span>Bravado · 0.8.9</span><span>Ctrl+Enter Apply · Ctrl+S Save preset</span></div>
+<section><h2>Space &amp; level</h2><div class="separation-control"><div class="field"><label for="separation">Separation</label><output id="separationValue" for="separation">Original · 0</output></div><input id="separation" type="range" min="-100" max="100" step="1" value="0" aria-label="Separation" aria-describedby="separationNote" title="Double-click to reset to Original"><div class="separation-scale" aria-hidden="true"><span>Mono</span><span>Original</span><span>Wide</span></div></div><button id="roomBtn" aria-pressed="false" style="width:100%">Stereo Room · Off</button><div class="field"><label for="room_amount">Room amount · %</label><input id="room_amount" type="number" min="0" max="40" step="1" value="20"></div><div class="field"><label for="double_track">Aligned double · +6.02 dB</label><input type="checkbox" id="double_track"></div><div class="field"><label for="bass_track">Bass double · below 120 Hz</label><input type="checkbox" id="bass_track"></div><div class="field"><label for="bass_delay">Bass sync delay · ms</label><input id="bass_delay" type="number" min="0" max="10" step="0.01" value="0"></div><details class="control-help"><summary>Details</summary><p class="note" id="separationNote">Left narrows to mono. Right tightens stereo bass, widens upper frequencies and adds gentle center presence. Front L/R only, after Room and speaker correction; muted banks stay muted. Double-click to reset. Apply to hear edits.</p><p class="note" id="roomNote">Short stereo ambience with an immediate dry sound. Adjust the amount to blend in reflections.</p><p class="note" id="bassNote">Original sound plus a 120 Hz low-pass copy. Zero added delay by default; small delays change phase and can cancel bass.</p></details><p class="note" id="doubleNote" role="status">Aligned double: +6.02 dB across all frequencies. Bass double: an extra low-pass copy. Apply to hear changes.</p></section>
+</aside></div></div><section class="lower" aria-label="Presets and frequency response"><section class="panel library-panel"><div class="panelhead"><h2>Preset library</h2></div><div id="presets" class="presetlist"></div><div class="librarytools"><button class="small" id="saveBtn">Save as…</button><button class="small" id="deleteBtn">Delete</button></div><details class="exchange control-help"><summary>Import &amp; export</summary><div class="actions"><button class="small" id="currentBtn">Load current APO</button><button class="small" id="importBtn">Import</button><button class="small" id="jsonBtn">Save JSON</button><button class="small" id="exportBtn">APO bundle</button></div><details class="control-help"><summary>Details</summary><p class="note">Bravado JSON, legacy peak presets, or strict APO/AutoEQ parametric text. Files stay on this computer.</p></details><input type="file" class="hidden" id="fileInput" accept=".json,.peace,.txt"></details></section><section class="panel response"><div class="panelhead"><h2>Frequency response</h2><small id="graphStats">Calculating response…</small></div><div class="graphbody"><canvas id="graph" aria-label="Frequency response graph at 48 kHz" role="img"></canvas><div class="legend"><span><b></b>EQ shape</span><span><b class="protected"></b>Output, selected bank</span><span>EQ response · 48 kHz</span></div></div></section><section class="panel library-panel dynamics" aria-labelledby="dynamicTitle">
+<div class="panelhead"><h2 id="dynamicTitle">Dynamic preset library</h2></div>
+<fieldset id="profile" class="profilelist" aria-labelledby="dynamicTitle">
+<label><input type="radio" name="profile" value="off" checked><span>Off</span></label>
+<label title="Applies a 1.1 root to the spectral gap below full scale."><input type="radio" name="profile" value="root"><span>Aperture X-intercept 1.1 (default)</span></label>
+<label title="Applies a 1.2 root to the spectral gap below full scale."><input type="radio" name="profile" value="root12"><span>Aperture X-intercept 1.2</span></label>
+<label title="Applies a 1.3 root to the spectral gap below full scale."><input type="radio" name="profile" value="root13"><span>Aperture X-intercept 1.3</span></label>
+<label title="Applies a 1.1 root to the spectral gap below full scale. Quieter original frequencies receive less lift."><input type="radio" name="profile" value="crevasse11"><span>Crevasse X-intercept 1.1</span></label>
+<label title="Applies a 1.2 root to the spectral gap below full scale. Quieter original frequencies receive less lift."><input type="radio" name="profile" value="crevasse12"><span>Crevasse X-intercept 1.2</span></label>
+<label title="Applies a 1.3 root to the spectral gap below full scale. Quieter original frequencies receive less lift."><input type="radio" name="profile" value="crevasse13"><span>Crevasse X-intercept 1.3</span></label>
+<label title="Lifts spectral ridges and preserves dips below their local median."><input type="radio" name="profile" value="dip"><span>Flashpoint Peaks</span></label>
+</fieldset><div class="profileSettings"><div class="field" id="liftField"><label for="max_lift">Max lift · dB</label><input id="max_lift" type="number" min="0" max="72" step="0.1" required title="Maximum boost when a dynamic preset is active."></div><div class="field"><label for="output">Output trim · dB</label><input id="output" type="number" min="-60" max="0" step="0.1" value="-6"></div></div><div class="library-options"><label for="rumble"><input type="checkbox" id="rumble">25 Hz rumble filter</label><details class="control-help"><summary>Details</summary><p class="note"><span id="modeNote">Reduce preamp or output trim if you hear distortion.</span></p></details></div></section><div class="footer"><span>Bravado · __BRAVADO_VERSION__</span><section class="status" aria-label="Equalizer connection"><div id="statusTitle">Preview mode</div><div id="statusText">Bravado EQ has not been enabled.</div><button class="small hidden" id="ackBtn">Acknowledge safety latch</button><details class="control-help"><summary>Connection tools</summary><div class="actions" style="margin-top:7px"><button class="small" id="restoreBtn" title="Restore previous APO config…">Restore config…</button><button class="small" id="refreshBtn">Refresh devices</button><button class="small" id="adminEnableBtn" title="Enable as administrator">Admin enable</button><button class="small" id="adminDisableBtn" title="Disable as administrator">Admin disable</button><button class="small" id="deviceSetupBtn" title="Configure output device…">Device setup…</button><button class="small" id="testBtn" title="Quiet 440 Hz test">440 Hz test</button><button class="small" id="quitBtn">Close Bravado</button></div></details></section><span>Ctrl+Enter Apply · Ctrl+S Save preset</span></div></section>
 </main>
+<dialog id="detailDialog"><h2 id="detailTitle"></h2><div id="detailBody"></div><div class="actions"><button id="detailDone">Done</button></div></dialog>
 <dialog id="confirmDialog"><h2 id="dialogTitle"></h2><div id="dialogBody"></div><div class="actions"><button id="cancelDialog">Cancel</button><button class="primary" id="okDialog">Continue</button></div></dialog>
-<dialog id="helpDialog"><h2>Make it your sound</h2><p>Choose a preset, adjust the curve, then select <b>Apply changes</b>. Enable connects Bravado to Equalizer APO; Disable removes Bravado’s effects. Closing Bravado leaves your last applied sound active.</p><p><b>Preamp</b> adjusts the whole curve. Each band changes a frequency region; Q controls its width. Double-click a fader to reset it. Hold Shift while selecting a Set button to store your curve.</p><p><b>Separation</b> narrows to mono on the left; on the right it tightens stereo bass and widens upper frequencies. <b>Stereo Room</b> blends in short reflections. Both affect front left and right channels.</p><p><b>Aligned double</b> adds 6.02 dB across the spectrum. <b>Bass double</b> adds a low-frequency copy below 120 Hz; a delay changes its phase and may reduce bass. Room and bass doubling support standard rates from 44.1 to 192 kHz.</p><p>The graph shows the EQ response before Room and Separation. Output peak measures activity on the Windows default device. Positive gain can clip; lower preamp if you hear distortion.</p><p>Use <b>Connection tools → Device setup</b> if changes are inaudible. Equalizer APO must be installed on the playback device. <b>Esc</b> mutes playback in an emergency; acknowledge the mute before unmuting in Windows.</p><div class="actions"><button id="closeHelp">Done</button></div></dialog>
+<dialog id="helpDialog"><h2>Make it your sound</h2><p>Choose a preset, adjust the curve, then select <b>Apply changes</b>. Enable connects Bravado to Equalizer APO; Disable removes Bravado’s effects. Closing Bravado leaves your last applied sound active.</p><p><b>Preamp</b> adjusts the whole curve. Each band changes a frequency region; Q controls its width. Double-click a fader to reset it. Hold Shift while selecting a Set button to store your curve.</p><p>The <b>Dynamic preset library</b> offers three root strengths for Aperture and Crevasse. Aperture lifts frequencies toward full scale. Crevasse weights that lift with the original signal before EQ. Flashpoint Peaks favors spectral ridges over local dips. Max lift sets the largest boost per frequency. Output trim follows the profile. At 48 kHz, a profile adds 85 ms of delay.</p><p><b>Separation</b> narrows to mono on the left; on the right it tightens stereo bass and widens upper frequencies. <b>Stereo Room</b> blends in short reflections. Both affect front left and right channels.</p><p><b>Aligned double</b> adds 6.02 dB across the spectrum. <b>Bass double</b> adds a low-frequency copy below 120 Hz; a delay changes its phase and may reduce bass. Room and bass doubling support standard rates from 44.1 to 192 kHz.</p><p>The graph shows the EQ response before Room and Separation. Output peak measures activity on the Windows default device. Positive gain can clip; lower preamp if you hear distortion.</p><p>Use <b>Connection tools → Device setup</b> if changes are inaudible. Equalizer APO must be installed on the playback device. <b>Esc</b> mutes playback in an emergency; acknowledge the mute before unmuting in Windows.</p><div class="actions"><button id="closeHelp">Done</button></div></dialog>
 <dialog id="saveDialog"><h2>Save preset</h2><label for="presetName">Name</label><input id="presetName" type="text" maxlength="80" autocomplete="off"><div class="actions"><button id="cancelSave">Cancel</button><button id="confirmSave" class="primary">Save</button></div></dialog>
 <script>
 'use strict';
@@ -1443,25 +1605,95 @@ const copy=x=>JSON.parse(JSON.stringify(x)), clamp=(v,a,b)=>Math.max(a,Math.min(
 let noticeTimer;function notify(text,error=false){clearTimeout(noticeTimer);$('message').textContent=text;$('message').classList.toggle('error',error);if(!error)noticeTimer=setTimeout(()=>{$('message').textContent=''},6500)}$('message').onclick=()=>{$('message').textContent=''};
 async function api(path,data){const r=await fetch('/api/'+path,{method:data===undefined?'GET':'POST',headers:{'X-Bravado-Token':token||'','Content-Type':'application/json'},body:data===undefined?undefined:JSON.stringify(data),signal:AbortSignal.timeout(data===undefined?10000:90000)});if(!r.ok){let e=await r.json();const err=Error(e.error||r.statusText);err.stale=r.status===403&&e.error==='Open Bravado using its launch shortcut';throw err}return r.headers.get('Content-Type').includes('zip')?r.blob():r.json()}
 async function action(fn){if(busy)return;busy=true;for(const id of ['applyBtn','connectBtn','disableBtn','adminEnableBtn','adminDisableBtn','exportBtn','restoreBtn'])$(id).disabled=true;try{await fn()}catch(e){notify(e.message,true)}finally{busy=false;for(const id of ['applyBtn','connectBtn','disableBtn','adminEnableBtn','adminDisableBtn','exportBtn','restoreBtn'])$(id).disabled=false}}
+
+// Page the EQ bands to fit the available width.
+function bandPager() {
+    const list=$('bands'), controls=$('bandsPager');
+    const [previous,next]=controls.querySelectorAll('button');
+    let page=0;
+    function refresh() {
+        if(!list.clientWidth)return;
+        const items=Array.from(list.querySelectorAll('.band'));
+        const count=Math.max(1,Math.floor((list.clientWidth-22)/44));
+        page=clamp(page,0,Math.max(0,Math.ceil(items.length/count)-1));
+        items.forEach((item,i)=>item.hidden=Math.floor(i/count)!==page);
+        controls.hidden=items.length<=count;
+        previous.disabled=page===0;
+        next.disabled=(page+1)*count>=items.length;
+    }
+    for(const button of [previous,next])button.onclick=()=>{page+=Number(button.dataset.step);refresh()};
+    new ResizeObserver(()=>refresh()).observe(list);
+    return {refresh};
+}
+const bandsPage=bandPager();
+
+function fitWorkspace() {
+    const compact=innerWidth<800;
+    const scale=Math.min(1,innerHeight/(compact?665:818),innerWidth/(compact?360:960));
+    document.body.classList.toggle('compact',compact);
+    document.body.style.zoom=scale;
+    document.body.style.width=(innerWidth/scale)+'px';
+    document.body.style.height=(innerHeight/scale)+'px';
+    document.body.dataset.view=$('view').value;
+}
+$('view').onchange=fitWorkspace;
+window.addEventListener('resize',fitWorkspace);
+fitWorkspace();
+
+// Disclosures open above the dashboard so extra controls never push panels off screen.
+let detailOwner=null;
+$('detailDone').onclick=()=>$('detailDialog').close();
+$('detailDialog').onclose=()=>{
+    if(!detailOwner)return;
+    detailOwner.append(...$('detailBody').childNodes);
+    detailOwner.querySelector('summary').focus();
+    detailOwner=null;
+};
+for(const detail of document.querySelectorAll('main details:not(details details)')) {
+    const summary=detail.querySelector('summary');
+    summary.onclick=event=>{
+        event.preventDefault();
+        detailOwner=detail;
+        $('detailTitle').textContent=summary.textContent;
+        $('detailBody').append(...Array.from(detail.childNodes).filter(node=>node!==summary));
+        $('detailDialog').showModal();
+    };
+}
+
 function dirty(){ $('dirty').textContent='Changes not applied';$('presetTitle').textContent=model.name; schedulePreview() }
 function bindNumber(id,get,set,min,max){$(id).onchange=()=>{let v=Number($(id).value);if(!Number.isFinite(v)||$(id).value.trim()===''||v<min||v>max){$(id).value=get();notify(`Value must be between ${min} and ${max}.`,true);return}set(v);dirty()}}
 function ensureBank(key){if(!model.banks[key]){model.banks[key]=copy(initial.banks.all);model.banks[key].bands.forEach(b=>{b.gain=0;b.q=1.41});model.banks[key].trim=0;model.banks[key].delay=0;model.banks[key].mute=false}}
 function sortBands(p){for(const [key,bank] of Object.entries(p.banks)){if(key!=='all'||!p.preamp_stages)bank.bands.sort((a,b)=>a.freq-b.freq)}return p}
 function renderBands(){const wrap=$('bands');wrap.replaceChildren();let axis=document.createElement('div');axis.className='scale';axis.innerHTML='<span>+30</span><span>0 dB</span><span>−30</span>';wrap.append(axis);model.banks[channel].bands.slice().sort((a,b)=>a.freq-b.freq).forEach((band,i)=>{const col=document.createElement('div');col.className='band'+(band.enabled?'':' disabled');
 const numeric=(cls,field,min,max,step,label)=>{const n=document.createElement('input');n.type='number';n.className=cls;n.min=min;n.max=max;n.step=step;n.value=band[field];n.setAttribute('aria-label',`Band ${i+1} ${label}`);n.onchange=()=>{let v=Number(n.value);if(n.value===''||!Number.isFinite(v)||v<min||v>max){n.value=band[field];notify(`${label} must be ${min}–${max}`,true);return}band[field]=v;if(field==='gain')slider.value=v;dirty()};return n};
-col.append(numeric('freq','freq',10,20000,1,'frequency Hz'));let rail=document.createElement('div');rail.className='rail';let slider=document.createElement('input');slider.type='range';slider.min=-30;slider.max=30;slider.step=.1;slider.value=band.gain;slider.setAttribute('aria-label',`Band ${i+1} gain fader`);slider.oninput=()=>{band.gain=Number(slider.value);gain.value=band.gain.toFixed(1);dirty()};slider.ondblclick=()=>{band.gain=0;slider.value=0;gain.value=0;dirty()};rail.append(slider);col.append(rail);const gain=numeric('gain','gain',-30,30,.1,'gain dB');col.append(gain);let label=document.createElement('div');label.className='bandlabel';label.textContent='Q';col.append(label,numeric('quality','q',.25,12,.01,'quality Q'));let select=document.createElement('select');select.setAttribute('aria-label',`Band ${i+1} filter type`);for(const [value,name] of [['PK','Peak'],['LS','Low shelf'],['HS','High shelf'],['HP','High pass'],['LP','Low pass'],['NO','Notch']])select.add(new Option(name,value));select.value=band.kind;select.onchange=()=>{band.kind=select.value;dirty()};col.append(select);let check=document.createElement('input');check.type='checkbox';check.checked=band.enabled;check.className='enable';check.setAttribute('aria-label',`Enable band ${i+1}`);check.onchange=()=>{band.enabled=check.checked;col.classList.toggle('disabled',!band.enabled);dirty()};col.append(check);wrap.append(col)})}
+col.append(numeric('freq','freq',10,20000,1,'frequency Hz'));let rail=document.createElement('div');rail.className='rail';let slider=document.createElement('input');slider.type='range';slider.min=-30;slider.max=30;slider.step=.1;slider.value=band.gain;slider.setAttribute('aria-label',`Band ${i+1} gain fader`);slider.oninput=()=>{band.gain=Number(slider.value);gain.value=band.gain.toFixed(1);dirty()};slider.ondblclick=()=>{band.gain=0;slider.value=0;gain.value=0;dirty()};rail.append(slider);col.append(rail);const gain=numeric('gain','gain',-30,30,.1,'gain dB');col.append(gain);let label=document.createElement('div');label.className='bandlabel';label.textContent='Q';col.append(label,numeric('quality','q',.25,12,.01,'quality Q'));let select=document.createElement('select');select.setAttribute('aria-label',`Band ${i+1} filter type`);for(const [value,name] of [['PK','Peak'],['LS','Low shelf'],['HS','High shelf'],['HP','High pass'],['LP','Low pass'],['NO','Notch']])select.add(new Option(name,value));select.value=band.kind;select.onchange=()=>{band.kind=select.value;dirty()};col.append(select);let check=document.createElement('input');check.type='checkbox';check.checked=band.enabled;check.className='enable';check.setAttribute('aria-label',`Enable band ${i+1}`);check.onchange=()=>{band.enabled=check.checked;col.classList.toggle('disabled',!band.enabled);dirty()};col.append(check);wrap.append(col)});bandsPage.refresh()}
 function render(){if(!model)return;ensureBank(channel);sortBands(model);renderMode();$('presetTitle').textContent=model.name;$('preamp').value=$('preampN').value=model.preamp;for(const id of ['output'])$(id).value=model[id];for(const id of ['rumble','bypass','double_track','bass_track'])$(id).checked=!!model[id];renderEffects();$('device').value=model.device;$('channel').value=channel;for(const id of ['trim','delay'])$(id).value=model.banks[channel][id];$('speakerMute').checked=model.banks[channel].mute;$('bankLabel').textContent=$('channel').selectedOptions[0].text;renderBands();renderLibrary();schedulePreview()}
 function renderMode(){$('modeBadge').textContent='NATIVE APO';$('modeNote').textContent='Reduce preamp or output trim if you hear distortion.';$('stageNote').textContent=model.preamp_stages?'· stages '+model.preamp_stages.map(s=>s.db+' dB before band '+(s.before+1)).join(' / '):''}
-function renderEffects(){renderSeparation();$('bass_delay').value=model.bass_delay??0;$('bass_delay').disabled=!model.bass_track;$('bassNote').textContent=model.bypass&&model.bass_track?'Bass double bypassed with EQ.':'Adds a low-frequency copy below 120 Hz. Delay changes its phase and may reduce bass.';const on=!!model.room;$('roomBtn').setAttribute('aria-pressed',String(on));$('roomBtn').textContent='Stereo Room · '+(on?'On':'Off');$('room_amount').value=model.room_amount??20;$('room_amount').disabled=!on;$('roomNote').textContent=model.bypass&&on?'Room bypassed with EQ. Turn off Bypass and Apply to hear it.':'Short ambience on front L/R · 44.1–192 kHz standard rates. Adjust the amount to blend in reflections.';$('doubleNote').textContent='Aligned double: +6.02 dB across all frequencies. Bass double: an extra low-pass copy. Apply to hear changes.'}
+function renderEffects(){renderSeparation();for(const radio of $('profile').elements)radio.checked=radio.value===(model.profile??'off');$('profile').disabled=model.bypass;$('max_lift').value=model.max_lift??__DEFAULT_MAX_LIFT__;$('bass_delay').value=model.bass_delay??0;$('bass_delay').disabled=!model.bass_track;$('bassNote').textContent=model.bypass&&model.bass_track?'Bass double bypassed with EQ.':'Adds a low-frequency copy below 120 Hz. Delay changes its phase and may reduce bass.';const on=!!model.room;$('roomBtn').setAttribute('aria-pressed',String(on));$('roomBtn').textContent='Stereo Room · '+(on?'On':'Off');$('room_amount').value=model.room_amount??20;$('room_amount').disabled=!on;$('roomNote').textContent=model.bypass&&on?'Room bypassed with EQ. Turn off Bypass and Apply to hear it.':'Short ambience on front L/R · 44.1–192 kHz standard rates. Adjust the amount to blend in reflections.';$('doubleNote').textContent='Aligned double: +6.02 dB across all frequencies. Bass double: an extra low-pass copy. Apply to hear changes.'}
 function renderSeparation(){const v=model.separation??0;const label=v===0?'Original · 0':v===-100?'Mono · −100':v<0?'Narrow · '+v:'Wide · +'+v;$('separation').value=v;$('separationValue').textContent=label+(model.bypass?' · bypassed':'');$('separation').setAttribute('aria-valuetext',label+(model.bypass?', bypassed':''))}
 $('separation').oninput=()=>{model.separation=Number($('separation').value);renderSeparation();dirty()};
 $('separation').ondblclick=()=>{model.separation=0;renderSeparation();dirty()};
+$('profile').onchange=event=>{model.profile=event.target.value;renderEffects();dirty()};
+function validLift(field){const value=field.valueAsNumber;return Number.isFinite(value)&&value>=0&&value<=72}
+$('max_lift').oninput=()=>{const field=$('max_lift');if(validLift(field)){model.max_lift=field.valueAsNumber;dirty()}};
 $('roomBtn').onclick=()=>{model.room=!model.room;renderEffects();dirty()};
 for(const id of ['double_track','bass_track'])$(id).onchange=()=>{model[id]=$(id).checked;renderMode();renderEffects();dirty()};
 bindNumber('bass_delay',()=>model.bass_delay??0,v=>model.bass_delay=v,0,10);
 bindNumber('room_amount',()=>model.room_amount??20,v=>model.room_amount=v,0,40);
-function renderLibrary(){$('presets').replaceChildren();for(const [name,preset] of Object.entries(library)){let b=document.createElement('button');b.textContent=name;b.title=factoryNotes[name]||name;if(model&&name===model.name)b.className='selected';b.onclick=()=>{model=copy(preset);channel='all';render();dirty()};$('presets').append(b)}}
-function schedulePreview(){clearTimeout(previewTimer);const seq=++previewSeq;previewTimer=setTimeout(async()=>{try{const data=await api('preview',{model,channel});if(seq!==previewSeq)return;graphData=data;drawGraph();$('doubleNote').textContent=data.stats.double_note||'Aligned double: +6.02 dB across all frequencies. Bass double: an extra low-pass copy. Apply to hear changes.';$('graphStats').textContent=data.stats.mode==='native'?`Gain ${data.stats.applied_db.toFixed(1)} dB · peak ${data.stats.estimated_peak_gain_db.toFixed(1)} dB${data.stats.estimated_peak_gain_db>0?' · clipping possible':''}`:`Fixed gain ${data.stats.applied_db.toFixed(1)} dB · bound ${data.stats.bound_db.toFixed(1)} dBFS`}catch(e){if(seq===previewSeq){$('graphStats').textContent='Invalid design';notify(e.message,true)}}},250)}
+function revealPreset() {
+    const list=$('presets'), item=list.querySelector('.selected');
+    if(!item||!list.clientHeight)return;
+    const top=item.offsetTop, bottom=top+item.offsetHeight;
+    if(top<list.scrollTop)list.scrollTop=top;
+    else if(bottom>list.scrollTop+list.clientHeight)list.scrollTop=bottom-list.clientHeight;
+}
+new ResizeObserver(revealPreset).observe($('presets'));
+function renderLibrary(){const hadFocus=$('presets').contains(document.activeElement);$('presets').replaceChildren();for(const [name,preset] of Object.entries(library)){let b=document.createElement('button');b.textContent=name;b.title=factoryNotes[name]||name;if(model&&name===model.name)b.className='selected';b.onclick=()=>{model=copy(preset);channel='all';render();dirty()};$('presets').append(b)}
+    const selected=$('presets').querySelector('.selected');
+    revealPreset();
+    if(hadFocus&&selected)selected.focus({preventScroll:true});
+}
+function schedulePreview(){clearTimeout(previewTimer);const seq=++previewSeq;previewTimer=setTimeout(async()=>{try{const data=await api('preview',{model,channel});if(seq!==previewSeq)return;graphData=data;drawGraph();$('doubleNote').textContent=data.stats.double_note||'Aligned double: +6.02 dB across all frequencies. Bass double: an extra low-pass copy. Apply to hear changes.';$('graphStats').textContent=(model.profile&&model.profile!=='off'&&model.max_lift>0&&!model.bypass)?'Static EQ only · profile varies with audio':data.stats.mode==='native'?`Gain ${data.stats.applied_db.toFixed(1)} dB · peak ${data.stats.estimated_peak_gain_db.toFixed(1)} dB${data.stats.estimated_peak_gain_db>0?' · clipping possible':''}`:`Fixed gain ${data.stats.applied_db.toFixed(1)} dB · bound ${data.stats.bound_db.toFixed(1)} dBFS`}catch(e){if(seq===previewSeq){$('graphStats').textContent='Invalid design';notify(e.message,true)}}},250)}
 function drawGraph(){if(!graphData)return;const c=$('graph'),dpr=devicePixelRatio||1,w=c.clientWidth,h=c.clientHeight;c.width=w*dpr;c.height=h*dpr;const ctx=c.getContext('2d');ctx.scale(dpr,dpr);ctx.clearRect(0,0,w,h);const l=38,r=w-12,t=13,b=h-28;let low=Math.min(-36,Math.floor(Math.min(...graphData.protected)/12)*12);low=Math.max(low,-96);let high=Math.max(18,Math.ceil(Math.max(...graphData.curve,...graphData.protected)/12)*12);const x=f=>l+Math.log(f/10)/Math.log(2000)*(r-l),y=db=>b-(db-low)/(high-low)*(b-t);ctx.font='10px Segoe UI';ctx.lineWidth=1;for(let db=low;db<=high;db+=12){ctx.strokeStyle=db===0?'#52626b':'#2e373f';ctx.beginPath();ctx.moveTo(l,y(db));ctx.lineTo(r,y(db));ctx.stroke();ctx.fillStyle='#85959f';ctx.fillText(db+'',4,y(db)+3)}for(const f of [10,30,100,300,1000,3000,10000,20000]){ctx.strokeStyle='#2e373f';ctx.beginPath();ctx.moveTo(x(f),t);ctx.lineTo(x(f),b);ctx.stroke();ctx.fillStyle='#85959f';ctx.fillText(f>=1000?(f/1000)+'k':f,x(f)-9,h-8)}ctx.save();ctx.beginPath();ctx.rect(l,t,r-l,b-t);ctx.clip();for(const [key,color] of [['curve','#7fd5dd'],['protected','#b6ee81']]){ctx.beginPath();ctx.strokeStyle=color;ctx.lineWidth=2;graphData.frequency.forEach((f,i)=>{i?ctx.lineTo(x(f),y(graphData[key][i])):ctx.moveTo(x(f),y(graphData[key][i]))});ctx.stroke()}ctx.restore()}
 new ResizeObserver(drawGraph).observe($('graph'));
 function showState(s){state=s;const bad=s.fault||s.muted;$('statusTitle').textContent=s.muted?'Playback muted':bad?'Needs attention':s.enabled?'Equalizer enabled':s.owned?'Equalizer disabled':'Ready to connect';$('statusTitle').classList.toggle('statusgood',s.enabled&&!bad);$('statusText').textContent=s.fault||(s.owned?'Applied '+s.verified_at:s.apo?'Choose Enable to apply your sound.':'Install Equalizer APO to enable system audio.');$('ackBtn').classList.toggle('hidden',!bad);$('connectBtn').textContent=s.enabled?'Reconnect':'Enable';if(s.storage_error)notify(s.storage_error,true)}
@@ -1478,7 +1710,7 @@ function transform(fn){model.banks[channel].bands.forEach(b=>b.gain=Math.round(c
 $('sortBtn').onclick=()=>{sortBands(model);renderMode();renderBands()};
 $('flattenBtn').onclick=()=>{model.banks[channel].bands.forEach(b=>{b.gain=0;b.kind='PK'});renderBands();dirty()};$('expandBtn').onclick=()=>transform(v=>v*1.1);$('compressBtn').onclick=()=>transform(v=>v*.9);$('downBtn').onclick=()=>transform(v=>v-1);$('upBtn').onclick=()=>transform(v=>v+1);
 $('addBtn').onclick=()=>{const bands=model.banks[channel].bands;if(bands.length===32)return notify('Maximum 32 bands per speaker bank',true);bands.push({freq:1000,gain:0,q:1.41,kind:'PK',enabled:true});renderBands();dirty()};$('removeBtn').onclick=()=>{if(model.banks[channel].bands.length>1){const bands=model.banks[channel].bands;const last=bands.slice().sort((a,b)=>a.freq-b.freq).at(-1);bands.splice(bands.indexOf(last),1);if(channel==='all')delete model.preamp_stages;renderMode();renderBands();dirty()}};
-async function apply(enable=false,admin=false){const snapshot=copy(model);notify(admin?'Approve the Windows administrator prompt. Applying and verifying configuration…':'Applying changes…');const result=await api(admin?'enable-admin':enable?'enable':'apply',{model:snapshot});notify(result.message);$('dirty').textContent=JSON.stringify(model)===JSON.stringify(snapshot)?'Changes applied':'New changes not applied';showState(await api('status'))}
+async function apply(enable=false,admin=false){const lift=$('max_lift');if(!validLift(lift)){lift.reportValidity();return}model.max_lift=lift.valueAsNumber;const snapshot=copy(model);notify(admin?'Approve the Windows administrator prompt. Applying and verifying configuration…':'Applying changes…');const result=await api(admin?'enable-admin':enable?'enable':'apply',{model:snapshot});notify(result.message);$('dirty').textContent=JSON.stringify(model)===JSON.stringify(snapshot)?'Changes applied':'New changes not applied';showState(await api('status'))}
 $('applyBtn').onclick=()=>action(()=>apply());$('connectBtn').onclick=()=>action(()=>apply(true));
 $('adminEnableBtn').onclick=()=>action(()=>apply(true,true));
 async function disable(admin=false){notify(admin?'Approve the Windows administrator prompt. Disabling EQ…':'Disabling equalizer…');notify((await api(admin?'disable-admin':'disable',{model})).message);showState(await api('status'))}
@@ -1494,7 +1726,7 @@ let testContext=null;
 $('testBtn').onclick=()=>action(async()=>{if(testContext)await testContext.close();testContext=new AudioContext();await testContext.resume();const osc=testContext.createOscillator(),gain=testContext.createGain(),now=testContext.currentTime;osc.frequency.value=440;gain.gain.setValueAtTime(0,now);gain.gain.linearRampToValueAtTime(10**(-42/20),now+.05);gain.gain.setValueAtTime(10**(-42/20),now+.7);gain.gain.linearRampToValueAtTime(0,now+.8);osc.connect(gain).connect(testContext.destination);osc.start(now);osc.stop(now+.85);notify('Playing a short 440 Hz sine at −42 dBFS before system effects. It may be inaudible when Windows is muted.');osc.onended=()=>{testContext?.close();testContext=null}});
 
 function download(blob,name){let url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),5000)}
-$('jsonBtn').onclick=()=>download(new Blob([JSON.stringify(sortBands(copy(model)),null,2)],{type:'application/json'}),'bravado-preset.json');$('exportBtn').onclick=()=>action(async()=>{notify('Building portable APO bundle…');download(await api('export',{model}),'bravado-apo-bundle.zip');notify('Bundle exported with filters.txt, preset and report. Room and bass effects include their WAV assets.')});
+$('jsonBtn').onclick=()=>download(new Blob([JSON.stringify(sortBands(copy(model)),null,2)],{type:'application/json'}),'bravado-preset.json');$('exportBtn').onclick=()=>action(async()=>{notify('Building portable APO bundle…');download(await api('export',{model}),'bravado-apo-bundle.zip');notify('Bundle exported with filters.txt, preset and report. Extract all files. For spectral profiles, follow INSTALL-PROFILE.txt.')});
 $('currentBtn').onclick=()=>action(async()=>{const r=await api('current');model=r.model;channel='all';render();dirty();notify('Current configuration loaded as preview. '+r.warnings.join(' '))});
 $('importBtn').onclick=()=>$('fileInput').click();$('fileInput').onchange=()=>action(async()=>{let f=$('fileInput').files[0];if(!f)return;if(f.size>250000)throw Error('Preset exceeds 250 kB');const r=await api('import',{text:await f.text()});model=r.model;channel='all';render();dirty();notify(r.warnings.join('\n')||'Preset imported as preview.');$('fileInput').value='' });
 $('saveBtn').onclick=()=>{$('presetName').value=Object.hasOwn(factoryNotes,model.name)?'My preset':model.name;$('saveDialog').showModal();$('presetName').focus();$('presetName').select()};
@@ -1504,7 +1736,7 @@ $('deleteBtn').onclick=()=>{if(Object.hasOwn(factoryNotes,model.name))return not
 document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!document.querySelector('dialog[open]')){e.preventDefault();$('panicBtn').click()}if(e.ctrlKey&&e.key==='Enter'){e.preventDefault();$('applyBtn').click()}if(e.ctrlKey&&e.key.toLowerCase()==='s'){e.preventDefault();$('saveBtn').click()}});
 let polling=false;setInterval(async()=>{if(polling||document.hidden)return;polling=true;try{const [s,m]=await Promise.all([api('status'),api('meter')]);showState(s);$('meterFill').style.width=m.peak===null?'0%':(m.peak*100)+'%';$('peakLabel').textContent=m.peak===null?'Unavailable':m.peak>0?(20*Math.log10(m.peak)).toFixed(1)+' dBFS':'−∞ dBFS'}catch(e){$('statusTitle').textContent=e.stale?'Bravado restarted':'Connection interrupted';$('statusText').textContent=e.stale?'Continue in the new Bravado window.':'Your applied sound remains active. Reopen Bravado to reconnect.';$('peakLabel').textContent='Disconnected'}finally{polling=false}},500);
 load().catch(e=>notify(e.message,true));
-</script></body></html>'''
+</script></body></html>'''.replace("__BRAVADO_VERSION__", VERSION).replace("__DEFAULT_MAX_LIFT__", str(DEFAULT_MAX_LIFT))
 
 
 # ============================================================================
@@ -1728,6 +1960,53 @@ def startup_lock():
 
 def self_test(stream=None):
     class Tests(unittest.TestCase):
+        def test_spectral_profiles(self):
+            legacy = defaults()
+            del legacy["profile"], legacy["max_lift"]
+            self.assertEqual(validate(legacy)["profile"], "off")
+            self.assertEqual(defaults()["max_lift"], 5)
+            self.assertEqual(validate(legacy)["max_lift"], 5)
+            for saved in (0, 3.5, 6, 9, 12):
+                self.assertEqual(validate({**legacy, "max_lift": saved})["max_lift"], saved)
+            for key, value in (("profile", "unknown"), ("max_lift", 73)):
+                with self.assertRaises(ValueError):
+                    validate({**legacy, key: value})
+            for mode, step in ROOT_STEPS.items():
+                weighted = mode.startswith("crevasse")
+                dll_name = CREVASSE_DLL if weighted else SPECTRAL_DLL
+                index = int(mode == "dip")
+                model = {**legacy, "profile": mode, "max_lift": 9, "output": -4}
+                files, report = compile_bundle(model)
+                self.assertEqual(digest(files[dll_name]), PROCESSOR_HASHES[dll_name])
+                self.assertEqual(json.loads(files["preset.json"])["profile"], mode)
+                self.assertIn("signal", report["48000"]["all"]["boost_notice"])
+                self.assertIn("INSTALL-PROFILE.txt", files)
+                chain = files["filters.txt"].decode().splitlines()
+                expected = f'VSTPlugin: Library "{dll_name}" Profile {index} Lift 0.125'
+                if step:
+                    expected += f" Root {step:g}"
+                self.assertEqual({line.strip() for line in chain if "VSTPlugin:" in line}, {expected})
+                self.assertEqual(chain[-1], "Preamp: -4 dB")
+                self.assertEqual(any("BRVDRY" in line for line in chain), weighted)
+                self.assertEqual(chain.count("Preamp: -4 dB"), 1)
+                for patch in ({"bypass": True}, {"profile": "off"}, {"max_lift": 0}):
+                    bypass = compile_bundle({**model, **patch})[0]
+                    self.assertNotIn(dll_name, bypass)
+                    self.assertNotIn(b"VSTPlugin:", bypass["filters.txt"])
+                with tempfile.TemporaryDirectory() as tmp:
+                    root = Path(tmp)
+                    apo = root / "APO config"
+                    apo.mkdir()
+                    engine = Engine(root / "data", apo)
+                    engine.enable(model)
+                    dll = next(apo.glob("bravado-*/*.dll"))
+                    self.assertIn(f'Library "{dll.resolve()}"', (dll.parent/"filters.txt").read_text())
+                    self.assertTrue(engine.verify())
+                    self.assertEqual(engine.current_preset()["model"]["profile"], mode)
+                    self.assertEqual(Engine(root/"data", apo).state["model"]["profile"], mode)
+                    engine.disable()
+                    self.assertNotIn(b"VSTPlugin:", engine.root_bytes())
+
         def test_desktop_size_fits_work_area(self):
             self.assertEqual(desktop_size(1920, 1080), (1120, 800))
             self.assertEqual(desktop_size(1024, 700), (992, 668))
@@ -1764,7 +2043,7 @@ def self_test(stream=None):
                     request = urllib.request.Request(f"http://{url.netloc}/api/state",
                                                      headers={"X-Bravado-Token": url.fragment})
                     with urllib.request.urlopen(request, timeout=2) as reply:
-                        self.assertEqual(json.load(reply)["presets"][SIGNATURE]["preamp"], 1.4)
+                        self.assertEqual(json.load(reply)["presets"][SIGNATURE]["preamp"], 3.1)
                 gui.start.side_effect = start
                 with patch.dict(sys.modules, {"webview": gui, "webview.guilib": SimpleNamespace(initialize=Mock()),
                                               "System.Windows.Forms": forms}):
@@ -1783,14 +2062,19 @@ def self_test(stream=None):
                     self.assertFalse(e.status()["owned"])
                     with self.assertRaisesRegex(ValueError, "Equalizer APO"):
                         e.enable(defaults())
-                    self.assertEqual(preview(defaults(), "all")["stats"]["requested_db"], 1.4)
+                    self.assertEqual(preview(defaults(), "all")["stats"]["requested_db"], 3.1)
 
         def test_factory_presets(self):
             presets = factory_presets()
             self.assertEqual(list(presets), [SIGNATURE, "Pocket Physics", "Flat", "Nordrassil", "Marble Alibi", "Red Herring", ANVIL])
             self.assertEqual(set(presets), set(PRESET_NOTES))
-            self.assertEqual(presets[SIGNATURE]["preamp"], 1.4)
+            self.assertEqual(presets[SIGNATURE]["preamp"], 3.1)
+            signature = presets[SIGNATURE]
+            self.assertEqual((signature["profile"], signature["max_lift"]), ("root", 5))
+            signature_files, _ = compile_bundle(signature)
+            self.assertIn(b'Profile 0 Lift 0.0694444444', signature_files["filters.txt"])
             flat = presets["Flat"]
+            self.assertEqual(flat["profile"], "off")
             self.assertEqual(flat["preamp"], 0)
             files, report = compile_bundle(flat)
             self.assertAlmostEqual(report["48000"]["all"]["estimated_peak_gain_db"], 0)
@@ -1911,7 +2195,7 @@ def self_test(stream=None):
             bands = model["banks"]["all"]["bands"]
             self.assertEqual([b for b in bands if b["freq"] not in {f for f, _, _ in DEFINITION}], original)
             self.assertEqual(len(bands), 17)
-            self.assertEqual(model["preamp"], 1.4)
+            self.assertEqual(model["preamp"], 3.1)
             for rate in RATES:
                 f = np.geomspace(20, 20000, 20000)
                 before = response(original, f, rate)
@@ -1948,6 +2232,7 @@ def self_test(stream=None):
 
         def test_band_sort_preserves_staged_chain(self):
             model = defaults()
+            model["preamp"] = 1.4
             model["banks"]["all"]["bands"].reverse()
             model["preamp_stages"] = [{"before": 0, "db": -2}, {"before": 4, "db": 3.4}]
             before = copy.deepcopy(model)
@@ -1988,6 +2273,14 @@ def self_test(stream=None):
                 self.assertTrue(all(b["kind"] == "PK" for b in model["banks"]["all"]["bands"]))
                 self.assertIn(f'Preamp: {model["preamp"]:g} dB', text)
                 # Export/import must reproduce magnitude AND phase at every rate.
+                # Dynamic bundles round-trip through their model, static APO text through its filters.
+                if spectral_active(model):
+                    restored = import_preset(files["preset.json"].decode())
+                    self.assertEqual(restored, validate(model))
+                    with self.assertRaisesRegex(ValueError, "preset.json"):
+                        import_preset(text)
+                    static_files, _ = compile_bundle({**model, "profile": "off"})
+                    text = static_files["filters.txt"].decode()
                 imported, _ = import_preset(text)
                 self.assertEqual(imported["preamp"], model["preamp"])
                 for rate in RATES:
@@ -2260,7 +2553,7 @@ def self_test(stream=None):
             m = validate(defaults())
             self.assertEqual([b["gain"] for b in m["banks"]["all"]["bands"]],
                              [2.8, 4.5, 2.8, 6, 5.7, 4, -2.4, 0, 4.8, 4.6, .9, -4.3, 2.8, 1.2, 6, -4, -5])
-            self.assertEqual(m["preamp"], 1.4)
+            self.assertEqual(m["preamp"], 3.1)
             self.assertEqual(m["name"], SIGNATURE)
 
         def test_validation(self):

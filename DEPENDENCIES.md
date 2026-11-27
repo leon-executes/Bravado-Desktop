@@ -18,6 +18,8 @@ still work. Peace is not a dependency.
 
 ## Build inventory
 
+The portable app includes Bravado's x64 spectral processors. Crevasse has two additional inputs for the original signal. Equalizer APO hosts them through its [VST filter](https://github.com/mirror/equalizerapo/blob/master/filters/VSTPluginFilterFactory.cpp). The standard build packages both supplied binaries. Rebuilding them requires a C compiler. The reference build uses [w64devkit 2.10.1](https://github.com/skeeto/w64devkit/releases/tag/v2.10.1). Runtime notices are in THIRD_PARTY_NOTICES.txt.
+
 Use [CPython 3.12 x64](https://www.python.org/downloads/windows/), then run
 `build_exe.cmd`. All Python package versions are pinned in
 [requirements-build.txt](requirements-build.txt). Links below lead to their exact

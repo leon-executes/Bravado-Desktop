@@ -21,9 +21,11 @@ if errorlevel 1 goto :failed
 "%BUILD_PYTHON%" -m pip install --disable-pip-version-check --no-cache-dir -r requirements-build.txt
 if errorlevel 1 goto :failed
 if not exist build mkdir build
+"%BUILD_PYTHON%" dsp\test_spectral.py
+if errorlevel 1 goto :failed
 "%BUILD_PYTHON%" bravado.py --self-test --report build\source-tests.txt
 if errorlevel 1 goto :failed
-"%BUILD_PYTHON%" -m PyInstaller --noconfirm --clean --onedir --windowed --noupx --name Bravado --icon "%CD%\bravado.ico" --add-data "%CD%\bravado.ico;." --exclude-module webview.platforms.cef --exclude-module webview.platforms.qt --specpath build --workpath build\pyinstaller --distpath dist bravado.py
+"%BUILD_PYTHON%" -m PyInstaller --noconfirm --clean --onedir --windowed --noupx --name Bravado --icon "%CD%\bravado.ico" --add-data "%CD%\bravado.ico;." --add-data "%CD%\dsp\BravadoSpectral.dll;dsp" --add-data "%CD%\dsp\BravadoCrevasse.dll;dsp" --exclude-module webview.platforms.cef --exclude-module webview.platforms.qt --specpath build --workpath build\pyinstaller --distpath dist bravado.py
 if errorlevel 1 goto :failed
 for %%F in (README.md DEPENDENCIES.md PRESETS.md LICENSE THIRD_PARTY_NOTICES.txt requirements-build.txt) do (
   copy /y "%%F" "dist\Bravado\%%F" >nul

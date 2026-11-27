@@ -20,7 +20,7 @@ stages retain their processing sequence while their controls display in frequenc
 - **Silent Anvil** is the original Bravado Signature, unchanged in sound.
 - Pocket Physics, Flat, Marble Alibi and Red Herring are unchanged.
 
-Signature and Nordrassil have **+1.4 dB preamp**. All other factory preamps are **0 dB**.
+Signature uses **+3.1 dB preamp** and Nordrassil uses **+1.4 dB**. All other factory preamps are **0 dB**.
 Room, Separation, doubling, delay, rumble filtering and output trim are off/zero.
 The 16 kHz band in Signature and Nordrassil remains disabled, with its stored
 −4 dB gain and Q 1.2 preserved. The 20 kHz cut remains enabled.
@@ -37,15 +37,13 @@ Choose and apply Signature to hear its additional filters.
 | 2100 Hz | +0.9 dB | 2.2 | Add focused articulation |
 | 6000 Hz | +1.2 dB | 2.0 | Support attack and texture below the 9 kHz emphasis |
 
-These are editable bands at 420, 2100 and 6000 Hz, shown in frequency order. Disable all three
-to recover Nordrassil's exact curve. Native APO peak filters preserve the complete
-frequency/gain/Q definitions; no second audio stream, plugin, new ceiling or
-automatic attenuation is introduced.
+To match Nordrassil from Signature, disable the three definition bands, set the
+preamp to +1.4 dB and select Off in the dynamic library.
 
-Calculated at 48 kHz, 90 Hz changes by −0.08 dB and 160 Hz by −0.29 dB. The total
-500 Hz response falls from +4.46 to +2.44 dB. At six standard rates from 44.1 to
-192 kHz, the change below 120 Hz stays within 0.16 dB. Maximum steady-state response
-is approximately +9.62 dB versus Nordrassil's +9.71 dB. These calculations do not
+At 48 kHz and equal preamp, the three bands change 90 Hz by −0.08 dB and
+160 Hz by −0.29 dB. With each preset's factory preamp, the static 500 Hz response
+is +4.14 dB for Signature and +4.46 dB for Nordrassil. Signature's maximum static response
+is approximately +11.32 dB versus Nordrassil's +9.71 dB. These calculations do not
 certify transient headroom, acoustic improvement or speaker protection. Positive
 boosts can still clip; lower the editable preamp if distortion appears.
 
@@ -55,13 +53,13 @@ brightness or increased level with improved detail.
 
 ## Calculated gain
 
-48 kHz, including preamp and enabled filters, integrated over 20 Hz–20 kHz.
+Static response at 48 kHz before dynamic processing, including preamp and enabled filters, integrated over 20 Hz–20 kHz.
 Pink noise has equal energy per octave; white noise has equal energy per Hz.
 These electrical estimates are not LUFS or acoustic loudness.
 
 | Preset | Pink-noise gain | White-noise gain | Maximum response |
 | --- | ---: | ---: | ---: |
-| Bravado Signature Preset | +6.30 dB | +4.18 dB | +9.62 dB |
+| Bravado Signature Preset | +8.00 dB | +5.88 dB | +11.32 dB |
 | Pocket Physics | +4.36 dB | +1.18 dB | +10.03 dB |
 | Flat | -0.00 dB | -0.00 dB | +0.00 dB |
 | Nordrassil | +6.48 dB | +3.92 dB | +9.71 dB |
@@ -138,7 +136,7 @@ The source of truth is `defaults()` and the factory constants in the matching `b
 
 ### Bravado Signature Preset
 
-Preamp: **+1.4 dB**.
+Preamp: **+3.1 dB**.
 
 | Hz | Gain dB | Q | State |
 | ---: | ---: | ---: | --- |
@@ -295,3 +293,16 @@ response at 44.1/48/88.2/96/176.4/192 kHz. Definition checks bound bass changes,
 verify lower-mid relief and articulation, and compare maximum frequency response.
 Those bounds are tests, not runtime gain caps. Packaged validation uses temporary
 APO configuration; it does not apply a preset to the live playback device.
+## Spectral profiles
+
+Choose a preset, select a row in **Dynamic preset library** on the bottom bar, then apply. Bravado Signature starts with Aperture X-intercept 1.1 at 5 dB Max lift. Saved presets restore their stored settings. Presets created before dynamic profiles open with the profile off. Set **Max lift** to zero or select **Off** for the original signal path and latency.
+
+The detector measures mean stereo bin power over a 1/12-octave neighborhood on a logarithmic grid from 25 Hz to 20 kHz (or Nyquist). Each channel pair shares one gain curve. At each point let L be the measured spectral level in dBFS.
+
+- **Aperture X-intercept 1.1** targets `−(−L)^(1/1.1)` when L is below 0 dBFS. For example, −24 dBFS targets about −18 dBFS before the Max lift setting.
+- **Aperture X-intercept 1.2 and 1.3** use the same formula with the selected root. Larger roots approach Max lift sooner.
+- **Crevasse X-intercept 1.1, 1.2 and 1.3** request the positive part of the corresponding Aperture root gain. The boost allowance is Max lift at original levels of −18 dBFS or higher and halves for each 36 dB below −18. At −30, −42 and −54 dBFS, the default 5 dB Max lift allows 3.97, 3.15 and 2.50 dB before the quiet-level fade. Each stereo pair has its own pre-EQ reference, with a duplicated partner for a final mono channel. Crevasse supports 1–32 output channels. Higher channel counts retain the static processing and output trim.
+- **Flashpoint Peaks** takes the median M within half an octave on each side. With `t = clamp((L − M + 8)/8, 0, 1)`, requested boost is `0.75 × t² × (3 − 2t) × max(−3 − L, 0)` dB. Frequencies at least 8 dB below the median receive zero lift.
+
+**Max lift** limits added gain per frequency, from 0 to 72 dB, initially 5 dB. For all three profile families, the added gain fades smoothly from full strength at −60 dBFS to zero at −80 dBFS, using the spectral level after static processing to preserve fades and quiet backgrounds. Overlapping 4,096-sample Hann windows run every 1,024 samples. Output trim follows reconstruction. Final waveform peaks depend on how frequencies sum. The graph shows the static part of the chain.
+
