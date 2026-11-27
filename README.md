@@ -2,25 +2,39 @@
 
 System-wide Windows EQ. Compact desktop panel. Local processing.
 
-**[Source repository](https://github.com/leon-executes/bravado-desktop) · [Dependencies & downloads](DEPENDENCIES.md) · [Preset guide & research](PRESETS.md) · [Licence](LICENSE)**
+**[Download for Windows x64](https://github.com/leon-executes/Bravado-Desktop/releases) · [Source repository](https://github.com/leon-executes/bravado-desktop) · [Dependencies & downloads](DEPENDENCIES.md) · [Preset guide & research](PRESETS.md) · [Licence](LICENSE)**
 
 <br>
 
-![Bravado Desktop app UI 5](https://github.com/user-attachments/assets/269cb683-1277-4f67-84cd-b5b12696c992)
+![Bravado Desktop app UI 5](https://github.com/user-attachments/assets/845870f8-5431-42d6-aad9-1264425c0a00)
 
 **Note**: Due to having encountered issues with other audio solutions such as Peace, in the shape of abrupt volume ramp-ups that threatened my speakers, let alone my eardrums, I developed an elegant solution with a few high-fidelity presets.
 
 ## Run
 
-1. Extract the Windows release into a writable folder. Keep `_internal` beside `Bravado.exe`.
+1. Download the release asset ending in `-win64.zip` from [GitHub Releases](https://github.com/leon-executes/Bravado-Desktop/releases) and extract it into a writable folder. Keep `_internal` beside `Bravado.exe`.
 2. Install [Equalizer APO](https://sourceforge.net/projects/equalizerapo/) and attach it to your playback device. Follow its restart instructions.
-3. Open `Bravado.exe`. Select a preset. Click **Enable**. Use **Apply changes** after edits.
+3. Open `Bravado.exe`, select **Bravado Signature Preset**, and click **Enable**. Use **Apply changes** if Bravado is already enabled.
 4. No audible change? Open **Connection tools → Device setup**. Check the selected playback device.
 
 No Python installation or browser launch. Requires Windows x64,
 [WebView2 Runtime](https://developer.microsoft.com/en-us/microsoft-edge/webview2/)
 and [.NET Framework 4.6.2+](https://dotnet.microsoft.com/en-us/download/dotnet-framework).
 See [dependencies](DEPENDENCIES.md) before installing anything.
+
+## Dynamic Sound Presets
+
+Bravado Signature sets the tonal balance. A dynamic sound preset adjusts the gain across the spectrum as the music plays. The combination can give a speaker system a more expansive soundstage and a sense of power and ease through dense passages.
+
+**Start with Signature.** Its 17-band curve uses **+3.1 dB preamp** and pairs with **Aperture X-intercept 1.1 (default)** at **5 dB Max lift**. At those settings, a frequency region near −6 dBFS receives about 0.9 dB of lift. In the same instant, a quieter region at −24 dBFS can receive the full 5 dB. That difference can bring harmonics and room reflections forward while a strong bass note keeps its weight.
+
+| Dynamic preset | How it shapes the sound |
+| --- | --- |
+| **Aperture X-intercept** | Brings quieter spectral detail forward and gives components near full scale less lift. Available at 1.1, 1.2 and 1.3 root strengths. |
+| **Crevasse X-intercept** | Weights the lift using the recording before EQ. Regions that were originally quiet receive a smaller boost allowance, preserving more contrast between foreground and ambience. Available at the same three strengths. |
+| **Flashpoint Peaks** | Compares each frequency region with its neighbors. It reinforces local peaks and leaves deeper dips intact, giving notes a more distinct outline. |
+
+To compare profiles, keep one static preset selected, choose a row in **Dynamic preset library**, and press **Ctrl+Enter**. Choose **Off** and apply to hear the static EQ alone. **Max lift** sets the most gain the profile can add per frequency. Use **Output trim** to match listening volume and **Save as** to keep the combination. [Spectral profile settings](PRESETS.md#spectral-profiles)
 
 ## Use
 
@@ -32,7 +46,7 @@ See [dependencies](DEPENDENCIES.md) before installing anything.
 
 | Preset | Choose it for |
 | --- | --- |
-| Bravado Signature Preset | Refined 17-band curve with deep foundation and focused definition; +1.4 dB preamp |
+| Bravado Signature Preset | Refined 17-band curve with deep foundation and focused definition, +3.1 dB preamp and Aperture 1.1 |
 | Pocket Physics | Deep foundation, dense kick-drum body and focused treble bite |
 | Flat | An uncoloured reference |
 | Nordrassil | Original 14-band foundation with expansive body and broad strength; +1.4 dB preamp |
@@ -58,7 +72,7 @@ build_exe.cmd
 
 For a custom Python location, set `BRAVADO_PYTHON` to its full executable path.
 The script installs [pinned packages](requirements-build.txt) in `.build-venv`,
-runs source tests, builds the app, copies the licence/docs, and tests the executable.
+tests the supplied x64 audio processors and Python source, builds the app, copies the licence/docs, and tests the executable.
 Output: `dist/Bravado/`. Reports: `build/source-tests.txt` and `build/packaged-tests.txt`.
 The build script downloads packages; the finished app runs offline.
 
@@ -68,16 +82,16 @@ Bravado.exe --diagnose --report diagnostics.json
 Bravado.exe --export signature-export
 ```
 
-Tests use temporary APO directories. `--export` writes Signature to an empty
-destination. The build is unsigned.
+Tests use temporary APO directories. `--export` writes the static Signature curve to an empty folder. To export Signature with Aperture or another dynamic profile, use **Import & export → APO bundle** in the app. The bundle includes the selected processor and its installation instructions. Import its `preset.json` to restore the combination in Bravado. The build is unsigned.
 
 ## Put this on GitHub
 
 ```text
 bravado.py                 Application, embedded UI and regression tests
+dsp/                       Native spectral processor source, two x64 DLLs, build script and tests
 bravado.ico                Application icon
 build_exe.cmd              Windows release build
-requirements-build.txt    Pinned build environment
+requirements-build.txt     Pinned build environment
 README.md                  Start here
 DEPENDENCIES.md            Requirements, downloads and package links
 PRESETS.md                 Tuning choices, settings and research
@@ -122,6 +136,10 @@ tests. No frontend build system, hosted assets, cloud service or added audio dri
 NumPy calculates responses and optional impulse assets. Equalizer APO runs the
 actual system audio processing independently of the controller.
 
+Equalizer APO hosts Bravado’s native spectral processor after the static EQ. It analyzes overlapping 4,096-sample windows and updates the gain curve every 1,024 samples, roughly every 21 ms at 48 kHz. Each stereo pair shares one gain curve, preserving the left–right level relationship at each frequency. Crevasse also analyzes a copy of the signal taken before EQ to determine how much lift to allow.
+
+An active profile adds about 85 ms of processing delay at 48 kHz. Select **Off** or set **Max lift** to zero and apply to bypass that stage. The frequency response graph displays the static EQ curve. Dynamic gain varies with the recording.
+
 The main EQ uses APO's native parametric filters. Export preserves frequency,
 gain, Q and filter type; it does not replace the curve with an approximation.
 Preset preamps are explicit editable values. There is no automatic attenuation
@@ -130,8 +148,8 @@ The Windows endpoint meter reports electrical output activity, not speaker power
 or acoustic loudness. Exclusive/direct playback may bypass the Windows effects chain.
 
 The fixed desktop window uses pywebview and the installed WebView2 engine. It
-fits within the work area, up to 1120 × 800 logical pixels. Larger preset libraries
-scroll inside their panel. The renderer, HTTP service, filter work and monitoring
+fits within the work area, up to 1120 × 800 logical pixels. The static and dynamic preset lists
+scroll inside their panels. Larger EQ banks use page arrows. The renderer, HTTP service, filter work and monitoring
 run outside the native window message loop; moving the window does not stop APO.
 Requests have time limits and polling does not overlap. Closing the window closes
 the controller service. `--headless` runs the service for diagnostics.
